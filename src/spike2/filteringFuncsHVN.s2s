@@ -1,0 +1,157 @@
+'%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+'%%%%%%%%%% IIR FILTERING ..........
+'%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+'%%%%%%%%%% Zero-phase Butterworth Filter ..........
+'%% Parameter
+'%% chToFilt% = Channel to filter
+'%% filtType% = Filter type (0 = Low pass, 1 = high pass)
+'%% filtOrder% = Order for butterworth filter, default = 2
+'%% cornerFreq = Corner frequency with -3 dB
+'%% tStart and tEnd = Time range to filter
+'%% flag% = Add 1 to optimise channel after filtering, add 2 to creat RealWave channel, default = 1
+'%%
+func BWFilt%(chToFilt%, filtType%, filtOrder% := 2, cornerFreq, tStart, tEnd, flag% := 1)
+
+var tInterval := tEnd - tStart;
+var err%, buffer%[8192], tmpBuffer%[8192], i%, n%, bufferLen%, sTime;
+var mc1%, mc2%;
+
+var mod%, ord%, freq, ok;
+
+ToolbarText(Print$("Please wait, IIR filtering is running! - %s", ChanTitle$(chToFilt%)));
+
+if ChanKind(chToFilt%) <> 1 and ChanKind(chToFilt%) <> 9 then
+  return -1
+endif; 'Channel to be filtered is not a waveform!
+
+'%%%%% Apply filter forward in time .....
+IIRCreate(-1, filtType%, 0, filtOrder%, cornerFreq);
+mc1% := IIRApply(-1, 0, chToFilt%, tStart, tEnd,flag%);
+
+'%%%%% Mirror resulting memory channel .....
+mc2% := MemChan(0,mc1%);
+
+sTime := tStart;
+repeat
+  n% := ChanData(mc1%, tmpBuffer%[], sTime, tEnd, sTime);
+
+  if n% > 0 then             'reading of data ok?
+    for i% := 0  to n%-1 do  'reverse buffer array ...
+      buffer%[n%-1-i%] := tmpBuffer%[i%];
+    next;
+    n% := ChanWriteWave(mc2%, buffer%[],MaxTime()+BinSize(chToFilt%)- sTime - (n% * BinSize(chToFilt%)));
+  endif;
+  
+  if n% > 0 then
+    sTime += n% * BinSize(chToFilt%)
+  endif;
+until n% <= 0;
+
+'%%%%% Apply filter on mirrored data .....
+ChanDelete(mc1%);
+mc1% := IIRApply(-1, 0, mc2%, MaxTime()+BinSize(chToFilt%)-tStart-tInterval, MaxTime()+BinSize(chToFilt%)-tStart,flag%);
+
+'%%%%% Mirror filtered mirror result ;) .....
+ChanDelete(mc2%);
+mc2% := MemChan(0, mc1%);
+
+sTime := MaxTime()-tStart-tEnd;
+repeat
+  n% := ChanData(mc1%, tmpBuffer%[], sTime, MaxTime()+BinSize(chToFilt%)-tStart, sTime);
+
+  if n% > 0 then             'read ok?
+    for i% := 0  to n%-1 do  'reverse buffer array
+      buffer%[n%-1-i%] := tmpBuffer%[i%];
+    next;
+    n% := ChanWriteWave(mc2%, buffer%[],MaxTime()+BinSize(chToFilt%) - sTime - (n% * BinSize(chToFilt%)));
+  endif;
+  
+  if n% > 0 then
+    sTime += n% * BinSize(chToFilt%)
+  endif;
+until n% <= 0;
+
+ChanDelete(mc1%);                                                'delete obsolete memory channels
+ChanTitle$(mc2%,ChanTitle$(chToFilt%)+"_filt"); ChanShow(mc2%);  'rename and show channel with filtered data
+
+ToolbarText("");
+
+return mc2%;   'return memory channel with filtered data
+
+end
+'...................................................
+
+
+'%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+'%%%%%%%%%% FIR FILTERING ..........
+'%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+'%%%%%%%%%% CalcFilterCoeff ..........
+'%% Procedure to fill an array with the desired FIR filter coefficients.
+'%% 
+'%% filtType$ = "Lowpass" or "Bandpass"
+'%% FiltCoeff[] = Array filter coefficients are returned in
+'%% samplingRate = Sampling rate of the filtered signal in Hz
+'%% transitGap = Transition gap in Hz,
+'%% cornerFreq1, cornerFreq2 = Frequeny boundaries for the filtering. If a lowpass is selected the second frequency can be omitted
+'%%
+proc CalcFiltCoeff(filtType$ := "Lowpass", FiltCoeff[], samplingRate := 500, transitGap := 5.0, cornerFreq1 := 0, cornerFreq2 := 0)
+
+var nGrid% := 16, extFr[256];
+var paramLP[4][2], paramBP[4][3];
+
+docase
+case  filtType$ = "Lowpass" then
+  paramLP[0][0]:= 0;		                                            'Starting frequency of pass band
+  paramLP[1][0]:= (cornerFreq1 - (0.4 * transitGap)) / samplingRate;  'Ending frequency of pass band     
+  paramLP[2][0]:= 1;		                                            'Desired gain (unity)
+  paramLP[3][0]:= 1;		                                            'Give this band a weighting of 1
+  paramLP[0][1]:= (cornerFreq1 + (0.6 * transitGap)) / samplingRate;  'Starting frequency of stop band
+  paramLP[1][1]:= 0.5; 	                                            'Ending frequency of stop band
+  paramLP[2][1]:= 0; 		                                            'Desired gain of 0 (stop band)
+  paramLP[3][1]:= 10;		                                            'Give this band a weighting of 10
+  FIRMake(1, paramLP[][], FiltCoeff[], nGrid%, extFr[]);
+case filtType$ = "Bandpass" then
+  paramBP[0][0]:= 0;		                                            'Starting frequency of stop band
+  paramBP[1][0]:= (cornerFreq1 - (0.6 * transitGap)) / samplingRate;  'Ending frequency of stop band
+  paramBP[2][0]:= 0;		                                            'Desired gain (unity)
+  paramBP[3][0]:= 10;		                                            'Give this band a weighting of 10
+  paramBP[0][1]:= (cornerFreq1 + (0.4 * transitGap)) / samplingRate;	'Starting frequency of pass band   
+  paramBP[1][1]:= (cornerFreq2 - (0.4 * transitGap)) / samplingRate;  'Ending frequency of pass band
+  paramBP[2][1]:= 1; 			                                          'Desired gain of 1 (stop band)
+  paramBP[3][1]:= 1;			                                          'Give this band a weighting of 1
+  paramBP[0][2]:= (cornerFreq2 + (0.6 * transitGap)) / samplingRate;	'Starting frequency of stop band
+  paramBP[1][2]:= 0.5;		                                          'Ending frequency of stop band
+  paramBP[2][2]:= 0;		                                            'Desired gain (unity)
+  paramBP[3][2]:= 10;		                                            'Give this band a weighting of 10
+  FIRMake(1, paramBP[][], FiltCoeff[], nGrid%, extFr[]); 
+else
+  Message("Cannot identify Filter type");
+endcase
+
+end
+'.....................................
+
+'%%%%%%%%%% RunFilter ..........
+'%% Perform FIR filter based on given filter coefficients
+'%%
+'%% chanToFilt% = Channel that will be filtered
+'%% FiltCoeff = Array with filter coefficients that were return by CalcFiltCoeff
+'%% tStart, tEnd = Interval for filtering
+'%% flag% = Add 1 to optimise channel after filtering, add 2 to creat RealWave channel, default = 1
+'%%
+Func RunFilter(chanToFilt%, FiltCoeff[], tStart, tEnd, flag% := 1)
+
+var mc%;
+
+ToolbarText(Print$("Please wait, filtering is running! (%s)", ChanTitle$(chanToFilt%)));
+
+mc% := FiltApply(FiltCoeff[], 0, chanToFilt%, tStart,tEnd, flag%);
+
+ToolbarText(""); 
+
+return mc%;
+
+end
+'...............................

@@ -1,0 +1,1097 @@
+' Spike2 script: SleepScoringRodents
+'
+' Created by H.-V.V. Ngo
+' Last modification: 16-07-09 by HVN
+'
+
+#include "filteringFuncsHVN.s2s"
+
+'%%%%% Default values for parameter dialogue .....
+var MAX_CH% := 0;
+var CH_EMG% := 4;
+var CH_SLST% := 5;
+var CH_HYPNO% := 6;
+var CH_ARConfig% := 7;
+var CH_STR$ := "1 2 3";
+var EEGLoCut := 0.3;
+var EEGHiCut := 30.0;
+var EMGLoCut := 10.0;
+var EMGHiCut := -1;
+
+var doNewFile% := 0;
+var doCut% := 0, CH_CUT% := 32;
+var doSlBouts% := 1;
+var doTransitMat% := 1;
+'..........
+
+'%%%%%%%%%% running variables ..........
+var currTime, counter%, index%;
+var mcSlStNew%, mcSlStOld%, epochAnz%, iEpoch%;
+var mcSlStTmp%, mcHypno%;
+var mcARConfigNew%;
+var hypnoArr[2500], hypnoLen%, hypnoVal;
+var code1%[4], code2%[4], code%[4];
+var res%, anz%, CurrView%;
+
+var arrCHExport%[64];
+
+var FileArr%[64], numFiles%, iFiles%;
+var FileTtl$[64];
+
+var iCh%, mc%, mcHP%;
+
+var fStart, fEnd;
+
+var chStrTmp$, n%;
+var FilName$, FilPath$;
+
+var anaCh%[64], arrChTi$[64];
+var arrARConfig%[64];
+var filtEEGCh%[64], filtEMG%;
+var rsPwr%, pwrSize;
+var rsHypno%, hypnoTmp%, hypnoCh1%, hypnoCh2%;
+
+var i%, j%;
+
+var fileExport%;
+var numSlStNew%, iSlStNew%, arrSlStNewTime[20000], arrSlStNewCodes%[4][20000];
+var numARConfigNew%, iARConfigNew%, arrARConfigNewTime[20000], arrARConfigNewCodes%[4][20000];
+
+var coefLowPass[1055];
+var SRate;
+var maxScale, maxScaleTmp;
+
+'%%%%% for sleep bout analysis .....
+var BoutOnsetPos%, BoutOnsetVal%;
+var arrBouts%[5][200000];
+var resBouts%;
+
+'%%%%% for transition matrix analysis .....
+var resTransitMat%;
+var arrTransitMat%[5][5];
+var currSlSt%, nextSlSt%;
+
+
+'%%%%%%%%%% Clear LogHandle ..........
+FrontView(LogHandle());  EditSelectAll();  EditClear();
+
+
+'%%%%% Procedure if multiple files are open .....
+numFiles% := ViewList(FileArr%[], 1);
+docase
+case numFiles% < 1 then
+    Message("No file open");
+    halt;
+case numFiles% = 1 then
+    CurrView% := FileArr%[1];
+else
+    Message("More than 1 file open");
+    
+    for iFiles% := 0 to numFiles%-1 do  FileTtl$[iFiles%] := View(FileArr%[iFiles%+1]).WindowTitle$(); next;
+    
+    DlgCreate("Please choose file");
+    DlgList(1, 40, FileTtl$[], numFiles%); 'v%:=0;
+    if DlgShow(iFiles%) then 
+        CurrView% := FileArr%[iFiles%+1];
+    else halt;
+    endif
+endcase
+'..........
+
+'%%%%%%%%%% Parameter input ..........
+'%%%%% Dialogue window for important parameters .....
+var ok%, dummy%;
+DlgCreate("Parameters");
+DlgString(1,"EEG channels:|e.g.\"1 2 19\"", 20);
+DlgInteger(2,"EMG channel:",1,64,26);
+DlgInteger(3,"Save scoring to:",1,64,26);
+DlgInteger(4,"Save hypnogram to:",1,64,26);
+DlgInteger(5,"Save arousal config to:",1,64,26);
+DlgReal(6,"EEG low cut (Hz)", 0.01, 250.0);
+DlgReal(7,"EEG high cut (Hz)", 5, 250.0);
+DlgReal(8,"EMG low cut", 0.01, 150.0);
+DlgReal(9,"EMG high cut (-1 = no Lowpass)", -1, 50.0);
+DlgCheck(10,"Save results in separate file?");
+DlgCheck(11,"Cut file...");
+DlgInteger(12,"based on this channel:",1,64,26);
+DlgCheck(13,"Analyse sleep bouts");
+DlgCheck(14,"Analyse transitions");
+
+DlgAllow(1023, 0,Change%);
+ok% := DlgShow(CH_STR$, CH_EMG%, CH_SLST%, CH_HYPNO%, CH_ARConfig%, EEGLoCut, EEGHiCut, EMGLoCut, EMGHiCut, doNewFile%, doCut%, CH_CUT%, doSlBouts%, doTransitMat%);
+if ok% = 0 then Halt; endif
+
+'%%%%% Extract Channels from argument string .....
+MAX_CH% := 0;
+chStrTmp$ := CH_STR$
+while Len(chStrTmp$) <> 0 do
+  MAX_CH% += 1;
+  anaCh%[MAX_CH%] := Val(chStrTmp$, n%);
+  
+  chStrTmp$ := DelStr$(chStrTmp$, 1, n%); 
+  Trim(chStrTmp$);  
+wend
+resize anaCh%[MAX_CH%+1];
+resize arrChTi$[MAX_CH%+1];
+resize filtEEGCh%[MAX_CH%+1];
+resize arrARConfig%[MAX_CH%];
+anaCh%[0] := MAX_CH%;
+filtEEGCh%[0] := MAX_CH%;
+'..........
+
+
+
+'%%%%% Prepare view .....
+FrontView(CurrView%);
+ToolbarVisible(1);
+Window(0,0,100,60);
+ChanHide(-1); ChanProcessClear(-1); CursorDelete(-1);
+
+FilPath$ := FileName$(1) + FileName$(2);
+
+'%%%%%%%%%% Pre-processing of data ..........
+'%%%%% Save channel names .....
+for iCh% := 1 to MAX_CH% do
+    arrChTi$[iCh%] := ChanTitle$(anaCh%[iCh%]);
+next
+
+'%%%%% Get sampling rate .....
+SRate := 1.0/View(CurrView%).BinSize(anaCh%[1]);
+
+if SRate < 1000 then
+    resize coefLowPass[511];
+endif
+
+'%%%%% Filter EEG data .....
+ToolbarText("Filter EEG data");  Yield();
+View(CurrView%);
+CalcFiltCoeff("Lowpass", coefLowPass, SRate, 5.0, EEGHiCut);
+
+for iCh% := 1 to MAX_CH% do
+    mcHP% := BWFilt%(anaCh%[iCh%], 1, 4, EEGLoCut, 0, View(CurrView%).MaxTime(), 1);  Yield();               'Highpass at 0.1 Hz (Butterworth 4th order)
+    filtEEGCh%[iCh%] := RunFilter(mcHP%, coefLowPass[], 0, View(CurrView%).MaxTime(),1);  Yield();
+    ChanDelete(mcHP%);
+    
+    ChanTitle$(filtEEGCh%[iCh%],Print$("%s_filt", ChanTitle$(anaCh%[iCh%])));
+    ChanShow(filtEEGCh%[iCh%]);
+next
+
+
+'%%%%% Filter EMG data .....
+View(CurrView%);
+ToolbarText("Prepare EMG channel"); Yield();
+
+if EMGHiCut > 0 then
+    CalcFiltCoeff("Lowpass", coefLowPass, SRate, 5.0, EMGHiCut);
+    mcHP% := BWFilt%(CH_EMG%, 1, 4, EMGLoCut, 0, View(CurrView%).MaxTime(), 1);  Yield();               'Highpass at 0.1 Hz (Butterworth 4th order)
+    filtEMG% := RunFilter(mcHP%, coefLowPass[], 0, View(CurrView%).MaxTime(),1);  Yield();
+else
+    filtEMG% := BWFilt%(CH_EMG%, 1, 4, EMGLoCut, 0, View(CurrView%).MaxTime(), 1);  Yield();               'Highpass at 0.1 Hz (Butterworth 4th order)
+endif
+
+ChanDelete(mcHP%);
+
+ChanTitle$(filtEMG%,Print$("%s_filt", ChanTitle$(CH_EMG%)));
+ChanShow(filtEMG%);
+YRange(filtEMG%, (-1)*maxScale, maxScale);       '%% Scale EMG according to EEG channels
+ToolbarText("");
+'..........
+
+
+'%%%%% Scaling of channels .....
+'%%% Find largest value ...
+maxScale := 0;
+for iCh% := 1 to MAX_CH% do
+    maxScaleTmp := ChanMeasure(filtEEGCh%[iCh%], 13, 0, View(CurrView%).MaxTime());
+    
+    if maxScaleTmp > maxScale then
+        maxScale := maxScaleTmp;
+    endif
+next
+
+for iCh% := 1 to MAX_CH% do
+    YRange(filtEEGCh%[iCh%], (-1)*maxScale, maxScale);
+next
+
+
+'%%%%% Prepare cutting procedure if desired .....
+if doCut% then
+    CursorSet(2);
+    if ChanKind(CH_CUT%) = 0 then
+        Cursor(1, View(CurrView%).MaxTime() / 4);
+        Cursor(2, 3 * (View(CurrView%).MaxTime() / 4));
+    else
+        Cursor(1, NextTime(CH_CUT%, 0));
+        Cursor(2, LastTime(CH_CUT%, View(CurrView%).MaxTime()));
+    endif
+    
+    Draw(0, MaxTime());
+
+    ok% := Interact("Cursor placement ok?", 1023, 0, "ESC|0x1b|Escape", "OK|0x0d|Enter");
+    
+    if ok% = 1 then
+        View(CurrView%);
+        for iCh% := 1 to MAX_CH% do  ChanDelete(filtEEGCh%[iCh%]);  next;
+        ChanShow(-1);
+        CursorDelete(-1);
+        ChanProcessClear(-1);
+        Draw(0, MaxTime());
+        Message("Aborted");
+        Halt;
+    endif
+        
+    fStart := Cursor(1);
+    fEnd := Cursor(2);
+    
+    CursorDelete(-1);
+else
+    fStart := 0;
+    fEnd := View(CurrView%).MaxTime();
+endif
+
+
+'%%%%%%%%%% Misc preparation ..........
+mcSlStNew% := MemChan(5);  ChanTitle$(mcSlStNew%,"SlStNew");  ChanShow(mcSlStNew%);
+mcSlStOld% := MemChan(5);  ChanTitle$(mcSlStOld%, "SlStOld"); ChanShow(mcSlStOld%);
+mcARConfigNew% := MemChan(5); ChanTitle$(mcARConfigNew%,"ArousalConf"); ChanShow(mcARConfigNew%);
+
+epochAnz% := Ceil((fEnd - View(CurrView%).BinSize(anaCh%[1]) - fStart) / 10);
+
+resize hypnoArr[epochAnz% * 10];
+hypnoTmp% := MemChan(1,0,1);  ChanTitle$(hypnoTmp%, "Hypnogram"); ChanShow(hypnoTmp%);  ChanScale(hypnoTmp%, 1);  YRange(hypnoTmp%, -2.5, 0.5);
+
+
+'%%%%% If new SlSt channel exists use that one (and draw into temporary hypnogram channel) otherwise initiate channel with 'FF' markers
+if ChanKind(CH_SLST%) = 5 then
+    MarkMask(CH_SLST%, -1, 1, -1);
+    MemImport(mcSlStOld%, CH_SLST%, 0, View(CurrView%).MaxTime());
+    
+    for i% := 0 to epochAnz% - 1 do
+        MemGetItem(mcSlStOld% , i% + 1,code%[]);
+        
+        if code%[0] > 16 then code%[0] -= 16; endif
+        
+        hypnoVal := code%[0];
+        
+        docase
+        case hypnoVal = 2 then
+            hypnoVal := -2;
+            for j% := 0 to 9 do  MemSetItem(hypnoTmp%, 0, (i% * 10) + j%, hypnoVal);  next
+        case hypnoVal = 3 then
+            hypnoVal := 0;
+            for j% := 0 to 9 step 2 do
+                MemSetItem(hypnoTmp%, 0, (i% * 10) + j%, hypnoVal);  
+                MemSetItem(hypnoTmp%, 0, (i% * 10) + j%+1, hypnoVal-0.25);  
+            next
+        case hypnoVal = 4 then
+            hypnoVal := -1;
+            for j% := 0 to 9 do  MemSetItem(hypnoTmp%, 0, (i% * 10) + j%, hypnoVal);  next
+        case hypnoVal = 8 then
+            hypnoVal := 0.5;
+            for j% := 0 to 9 do  MemSetItem(hypnoTmp%, 0, (i% * 10) + j%, hypnoVal);  next
+        else
+            hypnoVal := 0;
+            for j% := 0 to 9 do  MemSetItem(hypnoTmp%, 0, (i% * 10) + j%, hypnoVal);  next
+        endcase
+    next 
+else
+    code%[0] := 255;
+    for iEpoch% := 0 to epochAnz%-1 do
+        MemSetItem(mcSlStOld%,0, (iEpoch% * 10) + 5.0 + fStart, code%[]);
+    next
+endif
+
+MemImport(mcSlStNew%, mcSlStOld%, 0, View(CurrView%).MaxTime());
+ChanShow(mcSlStOld%); ChanShow(mcSlStNew%);
+
+
+'%%%%% If ARCh already exists, import
+if ChanKind(CH_ARConfig%) = 5 then
+    MemImport(mcARConfigNew%, CH_ARConfig%, 0, View(CurrView%).MaxTime());
+else
+    code%[0] := 0;
+    for iEpoch% := 0 to epochAnz%-1 do
+        MemSetItem(mcARConfigNew%,0, (iEpoch% * 10) + 5.0 + fStart, code%[]);
+    next
+endif
+
+
+'%%%%% Prepare spectra window .....
+pwrSize := 1;
+while pwrSize < 4 * SRate do
+    pwrSize *= 2;    
+wend
+
+rsPwr% := SetPower(filtEEGCh%[], pwrSize, 1);
+Window(60,60,100,100); WindowVisible(1);
+XRange(0, 20); YRange(1,0,0.004);
+View(CurrView%);
+'..........
+
+
+'%%%%% Prepare hypnogram window .....
+rsHypno% := FileNew(7, 1, 1, 1, epochAnz%, 32);
+Window(0,60,60,100); WindowVisible(1);
+Draw(1, epochAnz%);
+hypnoCh1% := MemChan(1, 0, 0.1);  ChanTitle$(hypnoCh1%, "Hypnogram"); ChanShow(hypnoCh1%);  ChanScale(hypnoCh1%, 1);
+YRange(hypnoCh1%, -2.5, 0.5);
+hypnoCh2% := MemChan(3, 0, 1);  ChanTitle$(hypnoCh2%, "Scored?"); DrawMode(hypnoCh2%, 1, 5);  ChanShow(hypnoCh2%);
+
+'%%% Fill hypno window, if previous scoring is present ...
+View(CurrView%);
+if ChanKind(CH_SLST%) = 5 then
+    for i% := 0 to epochAnz% - 1 do
+        View(CurrView%);
+        MemGetItem(mcSlStOld% , i% + 1,code%[]);
+        
+        if code%[0] > 16 then code%[0] -= 16; endif
+        
+        hypnoVal := code%[0];
+        
+        View(rsHypno%);
+        docase
+        case hypnoVal = 2 then
+            hypnoVal := -2;
+            for j% := 0 to 9 do  MemSetItem(hypnoCh1%, 0, i% + (j% * 0.1), hypnoVal);  next
+            MemSetItem(hypnoCh2%, 0, i%);
+        case hypnoVal = 3 then
+            hypnoVal := 0;
+            for j% := 0 to 9 step 2 do
+                MemSetItem(hypnoCh1%, 0, i% + (j% * 0.1), hypnoVal);  
+                MemSetItem(hypnoCh1%, 0, i% + ((j% + 1) * 0.1), hypnoVal-0.25);
+                
+                MemSetItem(hypnoCh1%, 0, counter% + (j%*0.1), hypnoVal);
+                MemSetItem(hypnoCh1%, 0, counter% + ((j%+1)*0.1), hypnoVal-0.5);
+            next
+            MemSetItem(hypnoCh2%, 0, i%);
+        case hypnoVal = 4 then
+            hypnoVal := -1;
+            for j% := 0 to 9 do  MemSetItem(hypnoCh1%, 0, i% + (j% * 0.1), hypnoVal);  next
+            MemSetItem(hypnoCh2%, 0, i%);
+        case hypnoVal = 1 then
+            hypnoVal := 0;
+            for j% := 0 to 9 do  MemSetItem(hypnoCh1%, 0, i% + (j% * 0.1), hypnoVal);  next
+            MemSetItem(hypnoCh2%, 0, i%);
+        case hypnoVal = 8 then
+            hypnoVal := 0.5;
+            for j% := 0 to 9 do  MemSetItem(hypnoCh1%, 0, i% + (j% * 0.1), hypnoVal);  next
+            MemSetItem(hypnoCh2%, 0, i%);
+        endcase
+    next 
+endif
+'..........
+
+
+'%%%%%%%%%% Prepare final visualization ..........
+View(CurrView%);
+
+ChanOrder(1, 1, filtEMG%);   'Move EMG channel to the bottom
+
+currTime := fStart + 10.0;
+counter% := 1;
+
+CursorSet(2);
+Cursor(1, currTime-10.0);
+Cursor(2, currTime);
+
+Draw(currTime - 10, 30.0);
+
+View(rsPwr%);
+Process(View(CurrView%).Cursor(1), View(CurrView%).Cursor(2), 1, 1, 0);
+View(CurrView%);
+
+'Show toolbar
+ToolbarVisible(1);
+ToolbarText(Print$("Epoch %d/%d", counter%, epochAnz%));
+
+View(CurrView%);
+MyToolbar();
+
+
+'%%%%%%%%%% Finish up ..........
+Toolbar("",1023);
+
+if Query("Save scoring?") then
+    View(CurrView%);
+    MemSave(mcSlStNew%, CH_SLST%, 0); 
+  
+    mcHypno% := MemChan(1, 0, 1);  ChanTitle$(mcHypno%, "Hypno"); ChanScale(mcHypno%, 1);
+    for i% := 0 to epochAnz% - 1 do
+        MemGetItem(mcSlStNew% , i% + 1,code%[]);
+        if code%[0] > 16 then code%[0] -= 16; endif
+        hypnoVal := code%[0];
+        docase
+        case hypnoVal = 2 then
+            hypnoVal := -2;
+            for j% := 0 to 9 do  MemSetItem(mcHypno%, 0, (i% * 10) + j%, hypnoVal);  next
+        case hypnoVal = 3 then
+            hypnoVal := 0;
+            for j% := 0 to 9 step 2 do
+                MemSetItem(mcHypno%, 0, (i% * 10) + j%, hypnoVal);  
+                MemSetItem(mcHypno%, 0, (i% * 10) + j% + 1, hypnoVal-0.25);  
+            next
+        case hypnoVal = 4 then
+            hypnoVal := -1;
+            for j% := 0 to 9 do  MemSetItem(mcHypno%, 0, (i% * 10) + j%, hypnoVal);  next
+        else
+            hypnoVal := 0;
+            for j% := 0 to 9 do  MemSetItem(mcHypno%, 0, (i% * 10) + j%, hypnoVal);  next
+        endcase
+    next  
+    MemSave(mcHypno%, CH_HYPNO%, 0);
+    YRange(CH_HYPNO%, -2.5, 0.5);
+    'ChanDelete(mcHypno%);
+    
+    MemSave(mcARConfigNew%, CH_ARConfig%, 0);
+    'ChanDelete(mcARConfigNew%);
+    
+    if doNewFile% then
+        FilName$ := FileName$(3) + FileName$(4) + "_scored" + FileName$(5);
+        ExportChanList(1);
+        ChanList(arrCHExport%[], 8192); 
+        ExportChanList(fStart, fEnd, arrCHExport%[]);
+        FilePathSet(FilPath$, 0);', 0, "Please choose joint folder for saving");
+        FileSaveAs(FilName$, 0, 0, "File speichern"); Yield();
+        ChanDelete(CH_SLST%);  ChanDelete(CH_HYPNO%);   ChanDelete(CH_ARConfig%);
+    endif
+endif
+
+
+if Query("Export scoring in TXT?") then
+    View(CurrView%);
+    FilePathSet(FilPath$, 0);', 0, "Please choose joint folder for saving");
+    FilName$ := FileName$(3) + FileName$(4) + "_scoring.txt";
+    
+    numSlStNew% := ChanData(mcSlStNew%, arrSlStNewTime[], 0, View(CurrView%).MaxTime(), arrSlStNewCodes%[][]);
+    numARConfigNew% := ChanData(mcARConfigNew%, arrARConfigNewTime[], 0, View(CurrView%).MaxTime(), arrARConfigNewCodes%[][]);
+    fileExport% := FileNew(1, 1);
+    
+    View(fileExport%).Print("Epoch\t SlStage\t");
+    for iCh% := 1 to MAX_CH% do
+        View(fileExport%).Print("%s\t", arrChTi$[iCh%]);
+    next
+    View(fileExport%).Print("\n");
+    
+    for iSlStNew% := 0 to numSlStNew% - 1 do
+        '%%% transform decimal ARCh code in binary ...
+        for iCh% := MAX_CH%-1 to 0 step -1 do
+            if Pow(2,iCh%) <= arrARConfigNewCodes%[0][iSlStNew%] then
+                arrARConfig%[iCh%] := 1;
+                arrARConfigNewCodes%[0][iSlStNew%] -= Pow(2, iCh%);
+            else
+                arrARConfig%[iCh%] := 0;
+            endif
+        next
+        
+        docase
+        case arrSlStNewCodes%[0][iSlStNew%] = 8 then
+            View(fileExport%).Print("%d\t 8\t", iSlStNew%+1);
+        case arrSlStNewCodes%[0][iSlStNew%] > 8 AND arrSlStNewCodes%[0][iSlStNew%] < 255 then
+            View(fileExport%).Print("%d\t %d\t", iSlStNew%+1, arrSlStNewCodes%[0][iSlStNew%]-16);
+        else
+            View(fileExport%).Print("%d\t %d\t", iSlStNew%+1, arrSlStNewCodes%[0][iSlStNew%]);
+        endcase
+        for iCh% := 0 to MAX_CH%-1 do
+            View(fileExport%).Print("%d\t", arrARConfig%[iCh%]);
+        next
+        View(fileExport%).Print("\n");
+    next
+    
+    
+    FileSaveAs(FilName$, 1, 1); Yield();
+    
+    FileClose(0, -1);
+endif
+
+
+'%%%%% Give overview of the scoring results
+FrontView(LogHandle()); Yield();
+PrintLog("Number of epochs = %d\n", epochAnz%);
+
+View(CurrView%);
+MarkMask(mcSlStNew%, 0, 0, -1); MarkMask(mcSlStNew%, 0, 1, 255);
+PrintLog("not scored = %d\n", Count(mcSlStNew%, 0, View(CurrView%).MaxTime()));
+
+MarkMask(mcSlStNew%, 0, 0, -1); MarkMask(mcSlStNew%, 0, 1, 01, 17);
+PrintLog("Wach = %d\n", Count(mcSlStNew%, 0, View(CurrView%).MaxTime()));
+
+MarkMask(mcSlStNew%, 0, 0, -1); MarkMask(mcSlStNew%, 0, 1, 02, 18);
+PrintLog("NREM = %d\n", Count(mcSlStNew%, 0, View(CurrView%).MaxTime()));
+
+MarkMask(mcSlStNew%, 0, 0, -1); MarkMask(mcSlStNew%, 0, 1, 04, 20);
+PrintLog("PreREM = %d\n", Count(mcSlStNew%, 0, View(CurrView%).MaxTime()));
+
+MarkMask(mcSlStNew%, 0, 0, -1); MarkMask(mcSlStNew%, 0, 1, 03, 19);
+PrintLog("REM = %d\n", Count(mcSlStNew%, 0, View(CurrView%).MaxTime()));
+
+MarkMask(mcSlStNew%, 0, 0, -1); MarkMask(mcSlStNew%, 0, 1, 04, 17, 18, 19, 20);
+PrintLog("Arousal = %d\n", Count(mcSlStNew%, 0, View(CurrView%).MaxTime()));
+
+MarkMask(mcSlStNew%, 0, 0, -1); MarkMask(mcSlStNew%, 0, 1, 08);
+PrintLog("Artifacts = %d\n", Count(mcSlStNew%, 0, View(CurrView%).MaxTime()));
+
+
+'%%%%% Prepare arrSlStNewCodes% array for possible sleep bout or transition matrix analysis .....
+if doSlBouts% OR doTransitMat% then
+    '%%%%% Find last scored epoch .....
+    MarkMask(mcSlStNew%, -1, 1, -1);  MarkMask(mcSlStNew%, 0, 0, 255);
+    numSlStNew% := Count(mcSlStNew%, 0, LastTime(mcSlStNew%, View(CurrView%).MaxTime()));    
+    
+    if arrSlStNewCodes%[0][0] = 8 or arrSlStNewCodes%[0][0] = 255 then
+        arrSlStNewCodes%[0][0] := 0;
+    endif
+    
+    if arrSlStNewCodes%[0][0] > 8 AND arrSlStNewCodes%[0][0] < 255 then
+        arrSlStNewCodes%[0][0] -= 16;
+    endif
+    
+    for iSlStNew% := 1 to numSlStNew%-1 do
+        if arrSlStNewCodes%[0][iSlStNew%] = 8 or arrSlStNewCodes%[0][iSlStNew%] = 255 then
+            arrSlStNewCodes%[0][iSlStNew%] := arrSlStNewCodes%[0][iSlStNew%-1];
+        endif
+    
+        if arrSlStNewCodes%[0][iSlStNew%] > 8 AND arrSlStNewCodes%[0][iSlStNew%] < 255 then
+            arrSlStNewCodes%[0][iSlStNew%] -= 16;
+        endif
+    next
+endif
+
+
+'%%%%% Analyze sleep bouts .....
+View(CurrView%);
+if doSlBouts% then
+    resize arrBouts%[][numSlStNew%];
+    ArrConst(arrBouts%[][], 0);
+    
+    '%%% first sleep stage
+    BoutOnsetVal% := arrSlStNewCodes%[0][0];
+    BoutOnsetPos% := 0;
+    
+    for iSlStNew% := 1 to numSlStNew%-2 do
+        Yield();
+        if arrSlStNewCodes%[0][iSlStNew%] <> BoutOnsetVal% then
+            arrBouts%[BoutOnsetVal%][0] += 1;
+            arrBouts%[BoutOnsetVal%][arrBouts%[BoutOnsetVal%][0]] := iSlStNew% - BoutOnsetPos%;
+                        
+            BoutOnsetVal% := arrSlStNewCodes%[0][iSlStNew%];
+            BoutOnsetPos% := iSlStNew%;
+        endif
+    next
+    
+    '%%% last sleep stage
+    if arrSlStNewCodes%[0][numSlStNew%-1] <> BoutOnsetVal% then
+        arrBouts%[BoutOnsetVal%][0] += 1;
+        arrBouts%[BoutOnsetVal%][arrBouts%[BoutOnsetVal%][0]] := numSlStNew%-1 - BoutOnsetPos%;
+    else
+        arrBouts%[BoutOnsetVal%][0] += 1;
+        arrBouts%[BoutOnsetVal%][arrBouts%[BoutOnsetVal%][0]] := numSlStNew% - BoutOnsetPos%;
+    endif
+    
+    '%%% Print results ...
+    resBouts% := FileNew(1,1);
+    View(resBouts%).WindowTitle$("Sleep bouts");
+    View(resBouts%).Print("WAKE\t NREM\t REM\t PreREM\n");
+    View(resBouts%).Print("%d\t %d\t %d\t %d\n", arrBouts%[1][0], arrBouts%[2][0], arrBouts%[3][0], arrBouts%[4][0]);
+    
+    for iSlStNew% := 1 to arrBouts%[Max(arrBouts%[1:][0])+1][0] do
+        for j% := 1 to 4 do
+            if iSlStNew% <= arrBouts%[j%][0] then
+                View(resBouts%).Print("%d\t", arrBouts%[j%][iSlStNew%]);
+            else
+                View(resBouts%).Print("NAN\t");
+            endif
+        next
+        View(resBouts%).Print("\n");
+    next
+endif
+'..........
+
+'%%%%% Create transition matrix .....
+View(CurrView%);
+if doTransitMat% then
+    for iSlStNew% := 0 to numSlStNew%-2 do
+        currSlSt% := arrSlStNewCodes%[0][iSlStNew%];
+        nextSlSt% := arrSlStNewCodes%[0][iSlStNew%+1];
+        if currSlSt% <> nextSlSt% then
+            arrTransitMat%[currSlSt%][nextSlSt%] += 1;
+        endif
+    next
+
+    '%%% Print Results
+    resTransitMat% := FileNew(1, 1);
+    View(resTransitMat%).WindowTitle$("Transition matrix");
+    View(resTransitMat%).Print("\t Wake\t NREM\t REM\t PreREM\n");
+    for iSlStNew% := 1 to 4 do
+        docase
+        case iSlStNew% = 1 then
+            View(resTransitMat%).Print("Wake\t");
+        case iSlStNew% = 2 then
+            View(resTransitMat%).Print("NREM\t");
+        case iSlStNew% = 3 then
+            View(resTransitMat%).Print("REM\t");
+        case iSlStNew% = 4 then
+            View(resTransitMat%).Print("PreREM\t");
+        endcase
+        
+        for j% := 1 to 4 do
+            View(resTransitMat%).Print("%d\t", arrTransitMat%[iSlStNew%][j%]);
+        next
+        View(resTransitMat%).Print("\n");
+    next
+endif
+'..........
+
+
+View(rsPwr%); FileClose(0,-1);
+View(rsHypno%); FileClose(0,-1);
+
+View(CurrView%);
+for iCh% := 1 to MAX_CH% do  ChanDelete(filtEEGCh%[iCh%]);  next;
+ChanDelete(filtEMG%);
+ChanDelete(mcSlStNew%); ChanDelete(mcSlStOld%);  ChanDelete(mcHypno%);  ChanDelete(hypnoTmp%); ChanDelete(mcARConfigNew%);
+    
+ChanShow(-1);
+CursorDelete(-1);
+ChanProcessClear(-1);
+Draw(0, MaxTime());  
+
+Window(0,0,100,100);
+
+
+
+Proc MyToolbar();
+ToolbarClear();  
+ToolbarText(Print$("Epoch %d/%d", counter%, epochAnz%));
+ToolbarSet(-1,"Quit");
+ToolbarSet(2,"Next|0x27|<",Next%); 
+ToolbarSet(3,"Previous|0x25|>", Previous%);
+ToolbarSet(4,"Clear Epoch|0x43|Remove scoring (C)", RemoveScore%);
+ToolbarSet(5,"Wake|0x31|Wake (1)", Wake%);
+ToolbarSet(6,"NREM|0x32|NREM (2)", NREM%);
+ToolbarSet(7,"REM|0x33|REM (3)", REM%);
+ToolbarSet(8,"Pre-REM|0x34|Pre-REM (4)", PreREM%);
+ToolbarSet(9,"Artefact|0x41|Artefact (A)",Artefact%);
+ToolbarSet(10,"Toggle Arousal|0x28|(Arrow down)",ToogleTr%);
+ToolbarSet(11,"Arousal Ch|0x20|Specify channels with arousal", ChangeARCh%);
+ToolbarSet(12,"Jump to...", EpochJump%);
+ToolbarSet(13,"Go to Cursor", CursorJump%);
+ToolbarSet(14,"Show all", ShowAll%);
+ToolbarText(Print$("Trigger %d/%d", counter%, epochAnz%));
+end;
+
+
+
+Func Previous%();
+counter% -= 1; Yield();
+
+docase
+case counter% = 0 then
+  counter% := epochAnz%;
+  currTime := (10 * counter%) + fStart;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 30, 30.0);
+case counter% = 1 then
+  currTime := fStart + 10.0;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 10, 30.0);
+else
+  currTime := fStart +  (10 * counter%);
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime-20, 30);
+endcase
+
+View(rsPwr%);  '%% Update power spectrum
+Process(View(CurrView%).Cursor(1), View(CurrView%).Cursor(2), 1, 1, 0);
+
+View(rsHypno%);  '%% Re-draw hypnogram
+Draw(1, epochAnz%);
+
+View(CurrView%);
+ToolbarText(Print$("Epoch %d/%d", counter%, epochAnz%));
+return 1;
+end;
+
+
+Func Next%();
+counter% += 1;  Yield();
+
+View(CurrView%);
+docase
+case counter% > epochAnz% then
+  counter% := 1;
+  currTime := fStart + 10;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 10, 30.0);
+case counter% = epochAnz% then
+  currTime := fStart + (counter% * 10);
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 30, 30.0);
+else
+  currTime := fStart + (10 * counter%);
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime-20, 30);
+endcase
+
+View(rsPwr%);  '%% Update power spectrum
+Process(View(CurrView%).Cursor(1), View(CurrView%).Cursor(2), 1, 1, 0);
+
+View(rsHypno%);  '%% Re-draw hypnogram
+Draw(1, epochAnz%);
+
+View(CurrView%); Yield();
+ToolbarText(Print$("Epoch %d/%d", counter%, epochAnz%));
+return 1;
+end;
+
+
+Func Wake%();
+var code%[4], oldSlSt%[4], index%;
+
+index% := Count(mcSlStNew%, 0, View(CurrView%).Cursor(1)+6.0);
+MemGetItem(mcSlStNew%, index%, oldSlSt%[]);
+
+code%[0] := 1;
+hypnoVal := 0.0;
+
+MarkSet(mcSlStNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+for j% := 0 to 9 do MemSetItem(hypnoTmp%, 0, fStart + ((counter%-1) * 10) + j%, hypnoVal);  next
+
+View(rsHypno%);
+for j% := 0 to 9 do MemSetItem(hypnoCh1%, 0, counter% + (j%*0.1), hypnoVal);  next
+MemSetItem(hypnoCh2%, 0, counter%);
+
+View(CurrView%);
+
+if oldSlSt%[0] = 255 then Next%() endif
+
+return 1;
+end;
+
+Func NREM%();
+var code%[4], oldSlSt%[4], index%;
+
+index% := Count(mcSlStNew%, 0, View(CurrView%).Cursor(1)+6.0);
+MemGetItem(mcSlStNew%, index%, oldSlSt%[]);
+
+code%[0] := 2;
+hypnoVal := -2.0;
+
+MarkSet(mcSlStNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+for j% := 0 to 9 do MemSetItem(hypnoTmp%, 0, fStart + ((counter%-1) * 10) + j%, hypnoVal);  next
+
+View(rsHypno%);
+for j% := 0 to 9 do MemSetItem(hypnoCh1%, 0, counter% + (j%*0.1), hypnoVal);  next
+MemSetItem(hypnoCh2%, 0, counter%);
+
+View(CurrView%);
+
+if oldSlSt%[0] = 255 then Next%() endif
+
+return 1;
+end;
+
+
+Func REM%();
+var code%[4], oldSlSt%[4], index%;
+
+index% := Count(mcSlStNew%, 0, View(CurrView%).Cursor(1)+6.0);
+MemGetItem(mcSlStNew%, index%, oldSlSt%[]);
+
+code%[0] := 3;
+hypnoVal := 0.0;
+MarkSet(mcSlStNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+
+for j% := 0 to 9 step 2 do
+    MemSetItem(hypnoTmp%, 0, (fStart + (counter%-1) * 10) + j%, hypnoVal);
+    MemSetItem(hypnoTmp%, 0, (fStart + (counter%-1) * 10) + j% + 1, hypnoVal-0.5);
+next
+
+View(rsHypno%);
+for j% := 0 to 9 step 2 do
+    MemSetItem(hypnoCh1%, 0, counter% + (j%*0.1), hypnoVal);
+    MemSetItem(hypnoCh1%, 0, counter% + ((j%+1)*0.1), hypnoVal-0.5);
+next
+MemSetItem(hypnoCh2%, 0, counter%);
+
+View(CurrView%);
+if oldSlSt%[0] = 255 then Next%() endif
+
+return 1;
+end;
+
+
+Func PreREM%();
+var code%[4], oldSlSt%[4], index%;
+
+index% := Count(mcSlStNew%, 0, View(CurrView%).Cursor(1)+6.0);
+MemGetItem(mcSlStNew%, index%, oldSlSt%[]);
+
+code%[0] := 4;
+hypnoVal := -1.0;
+MarkSet(mcSlStNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+
+for j% := 0 to 9 do MemSetItem(hypnoTmp%, 0, (fStart + (counter%-1) * 10) + j%, hypnoVal);  next
+
+View(rsHypno%);
+for j% := 0 to 9 do MemSetItem(hypnoCh1%, 0, counter% + (j%*0.1), hypnoVal);  next
+MemSetItem(hypnoCh2%, 0, counter%);
+
+View(CurrView%);
+if oldSlSt%[0] = 255 then Next%() endif
+
+return 1;
+end;
+
+
+Func Artefact%();
+var code%[4], oldSlSt%[4], index%;
+
+index% := Count(mcSlStNew%, 0, View(CurrView%).Cursor(1)+6.0);
+MemGetItem(mcSlStNew%, index%, oldSlSt%[]);
+
+code%[0] := 8;
+hypnoVal := 0.5;
+MarkSet(mcSlStNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+
+for j% := 0 to 9 do MemSetItem(hypnoTmp%, 0, (fStart + (counter%-1) * 10) + j%, hypnoVal);  next
+
+View(rsHypno%);
+for j% := 0 to 9 do MemSetItem(hypnoCh1%, 0, counter% + (j%*0.1), hypnoVal);  next
+MemSetItem(hypnoCh2%, 0, counter%);
+
+View(CurrView%);
+if oldSlSt%[0] = 255 then Next%() endif
+
+return 1;
+end;
+
+
+Func RemoveScore%();
+var code%[4], oldSlSt%[4], index%;
+
+index% := Count(mcSlStNew%, 0, View(CurrView%).Cursor(1)+6.0);
+MemGetItem(mcSlStNew%, index%, oldSlSt%[]);
+
+code%[0] := 255;
+hypnoVal := 0;
+MarkSet(mcSlStNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+
+for j% := 0 to 9 do MemSetItem(hypnoTmp%, 0, (fStart + (counter%-1) * 10) + j%, hypnoVal);  next
+
+View(rsHypno%);
+for j% := 0 to 9 do MemSetItem(hypnoCh1%, 0, counter% + (j%*0.1), hypnoVal);  next
+MemDeleteItem(hypnoCh2%, counter%);
+
+View(CurrView%);
+if oldSlSt%[0] = 255 then Next%() endif
+
+return 1;
+end;
+
+
+Func ToogleTr%();
+var code%[4], index%;
+
+index% := Count(mcSlStNew%, 0, View(CurrView%).Cursor(1)+6.0);
+if index% >= counter% then
+  MemGetItem(mcSlStNew%, index%, code%[]);
+  docase
+  case code%[0] < 16 then
+    code%[0] += 16;
+        MarkSet(mcSlStNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+        code%[0] := Pow(2,MAX_CH%)-1;
+        MarkSet(mcARConfigNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+  case code%[0] > 75 then
+    
+  else    
+    code%[0] -= 16;
+        MarkSet(mcSlStNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+        code%[0] := 0;
+        MarkSet(mcARConfigNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);
+  endcase
+endif
+
+return 1;
+end;
+
+
+'%%%%%%%%%% Specify channels with arousal
+Func ChangeARCh%();
+var code%[4];
+var arrARConfigTmp%[4];
+
+index% := Count(mcARConfigNew%, 0, View(CurrView%).Cursor(1)+6.0);
+
+if index% >= counter% then
+    MemGetItem(mcSlStNew%, index%, code%[]);
+    if code%[0] > 5 AND code%[0] < 75 then
+        MemGetItem(mcARConfigNew%, index%, code%[]);
+        
+        for iCh% := MAX_CH%-1 to 0 step -1 do
+            if Pow(2,iCh%) <= code%[0] then
+                arrARConfig%[MAX_CH%-1-iCh%] := 1;
+                code%[0] -= Pow(2, iCh%);
+            else
+                arrARConfig%[MAX_CH%-1-iCh%] := 0;
+            endif
+            
+        next
+        
+        DlgCreate("Specify arousal channels");
+        for i% := 0 to MAX_CH%-1 do
+            DlgCheck(i%+1,Print$("%s", ChanTitle$(anaCh%[MAX_CH%-i%])));
+        next
+        
+        ok% := DlgShow(arrARConfig%[]);
+        if ok% = 0 then return 1; endif
+        
+        '%%% invert arrARConfig ...
+'        arrConst(arrARConfigTmp%[], arrARConfig%[]);
+'        for iCh% := 0 to MAX_CH%-1 do
+'            arrARConfig%[iCh%] := arrARConfigTmp%[MAX_CH%-1-iCh%];
+'        next
+'        
+        
+        code%[0] := 0;
+        for iCh% := 0 to MAX_CH%-1 do
+            code%[0] += arrARConfig%[MAX_CH%-1-iCh%] * Pow(2,iCh%);
+        next
+
+        index% := Count(mcSlStNew%, 0, View(CurrView%).Cursor(1)+6.0);
+        MarkSet(mcARConfigNew%, Cursor(1)+4.5, Cursor(1)+6.5, code%[]);        
+    endif
+endif
+
+return 1;
+end
+
+
+'%%%%%%%%%% TO-DO: Jump to closest epoch 
+Func CursorJump%()
+var index%;
+
+if (Cursor(1) < fStart) or (Cursor(1) > fEnd) then
+    Message("Cursor is out of desired range");
+    return 1;
+endif
+
+
+CursorVisible(2, 1);
+
+if (NextTime(mcSlStNew%,Cursor(1)) - Cursor(1)) < (Cursor(1) - LastTime(mcSlStNew%, Cursor(1))) then 'closer to following SlStage marker
+	counter% := Count(mcSlStNew%, 0, NextTime(mcSlStNew%, Cursor(1))+6.5);
+else 'close to previous SlStage marker
+	counter% := Count(mcSlStNew%, 0, Cursor(1));
+endif
+
+docase
+case counter% > epochAnz% then
+  counter% := 1;
+  currTime := 10;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 10, 30.0);
+case counter% = epochAnz% then
+  currTime := counter% * 10;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 30, 30.0);
+case counter% < 2 then
+  counter% := 1;
+  currTime := 10.0;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 10, 30.0);
+else
+  currTime := 10 * counter%;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime-20, 30);
+endcase
+
+View(rsPwr%);
+Process(View(CurrView%).Cursor(1), View(CurrView%).Cursor(2), 1, 1, 0);
+
+View(rsHypno%);  '%% Re-draw hypnogram
+Draw(1, epochAnz%);
+
+View(CurrView%);
+ToolbarText(Print$("Epoch %d/%d", counter%, epochAnz%));
+
+return 1;
+end
+'....................
+
+
+Func EpochJump%()
+
+counter% := Input(Print$("Jump To (1 - %d):",epochAnz%), counter%, 1, epochAnz%);
+
+docase
+case counter% > epochAnz% then
+  counter% := 1;
+  currTime := 10;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 10, 30.0);
+case counter% = epochAnz% then
+  currTime := counter% * 10;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 30, 30.0);
+case counter% < 2 then
+  counter% := 1;
+  currTime := 10.0;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime - 10, 30.0);
+else
+  currTime := 10 * counter%;
+  Cursor(1, currTime - 10.0);
+  Cursor(2, currTime);
+  Draw(currTime-20, 30);
+endcase
+
+View(rsPwr%);  '%% Update power spectrum
+Process(View(CurrView%).Cursor(1), View(CurrView%).Cursor(2), 1, 1, 0);
+
+View(rsHypno%);  '%% Re-draw hypnogram
+Draw(1, epochAnz%);
+
+View(CurrView%);
+ToolbarText(Print$("Epoch %d/%d", counter%, epochAnz%));
+
+Return 1;
+end
+
+
+Func ShowAll%()
+
+CursorVisible(2, 0);
+Draw(fStart, fEnd - fStart);
+
+return 1;
+end
+
+
+Func Change%(item%)
+var val%;
+
+if (item% = 10) or (item% = 0) then 
+	val% := DlgValue(10);
+	DlgEnable(val%, 11);
+endif
+
+if (item% = 11) or (item% = 0) then 
+	val% := DlgValue(11);
+	DlgEnable(val%, 12);
+endif
+
+return 1;                     'Return 1 to keep dialog running
+end;
