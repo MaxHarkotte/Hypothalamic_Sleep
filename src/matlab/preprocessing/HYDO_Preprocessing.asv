@@ -60,7 +60,7 @@ for iRec = 1:size(selection,2)
     end
 
     cfg               = [];
-    EEGEMG_downsample = ft_appenddata(cfg, datr{:}); 
+    EEGEMG_downsample = ft_appenddata(cfg, datr{:}); % this expands all cells into input variables
 
     clear datr; 
 
@@ -84,7 +84,7 @@ for iRec = 1:size(selection,2)
     end
 
     cfg               = [];
-    LFP_downsample = ft_appenddata(cfg, datr{:}); 
+    LFP_downsample = ft_appenddata(cfg, datr{:}); % this expands all cells into input variables
 
     clear datr; 
 
@@ -94,18 +94,51 @@ for iRec = 1:size(selection,2)
     cfg.reref = 'yes';
     cfg.refmethod = 'avg';
     cfg.refchannel = 'all';
-    LFP_reref = ft_preprocessing(cfg, LFP_downsample);
+    LFP_reref = ft_preprocessing(cfg, Probe_downsample);
 
     % Write data as .edf file 
-    cfg       = [];
-    rec_clean = ft_appenddata(cfg, EEGEMG_downsample, LFP_reref);
 
-    % Change header information
+    
     
 
 
 
 end
 
+
+    fns = fieldnames(Downsampled_dat);
+fns = sort(fns);
+Downsampled_dat_clean = Downsampled_dat.(fns{1});
+
+ for iCh = 2:size(fns,1)
+ Downsampled_dat_clean.trial = {vertcat(Downsampled_dat_clean.trial{1,1}, Downsampled_dat.(fns{iCh}).trial{1,1})}; 
+ Downsampled_dat_clean.label = vertcat(Downsampled_dat_clean.label, Downsampled_dat.(fns{iCh}).label); 
+ end
+ 
+% construct header 
+Downsampled_dat_clean.hdr.Fs            = Downsampled_dat_clean.fsample;
+Downsampled_dat_clean.hdr.label         = Downsampled_dat_clean.label; 
+Downsampled_dat_clean.hdr.nChans        = size(Downsampled_dat_clean.label,1);
+Downsampled_dat_clean.hdr.nTrials       = 1;
+Downsampled_dat_clean.hdr.nSamplesPre   = 0;
+Downsampled_dat_clean.hdr.nSamples      = size(Downsampled_dat_clean.time{1,1},2);
+Downsampled_dat_clean.hdr.chantype      = labels;
+units                                   = cell(size(labels,1), 1);
+units(:)                                = {'uV'};
+Downsampled_dat_clean.hdr.chanunit      = units;
+
+hdr                                     = ft_fetch_header(Downsampled_dat_clean);
+
+% write .edf files 
+if ~exist(strcat(serv_connect, dirProject, dirAnalysis, '02_Data/01_Downsampled_data/', rec_ID_oe, '/', rec_ID_oe),'dir')
+    mkdir(strcat(serv_connect, dirProject, dirAnalysis, '02_Data/01_Downsampled_data/', rec_ID_oe, '/', rec_ID_oe))
+end
+
+cd(strcat(serv_connect, dirProject, dirAnalysis, '02_Data/01_Downsampled_data/', rec_ID_oe, '/', rec_ID_oe)) % change dir to local if needed
+
+file_name = strcat(char(rec_info.Animal), '-', char(rec_info.Condition), '-', char(rec_info.StimProtocol));
+
+ft_write_data(strcat(file_name, '.edf') ...
+    , Downsampled_dat_clean.trial{1}, 'header', hdr,'chaninx', Downsampled_dat_clean.label', 'dataformat', "edf")
 
 
