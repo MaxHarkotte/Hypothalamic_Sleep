@@ -1,6 +1,6 @@
-% Prepare intracranial recordings for further analysis 
+% Preprocessing pipeline Hypothalamic Sleep Project
 % Author: Max Harkotte (maximilian.harkotte@gmail.com)
-% last updated: June 2024
+% last updated: July 2024
 clear 
 close all
 clc 
@@ -9,9 +9,9 @@ clc
 rec_ID_nlx             = '2024-05-21_10-28-00';               
 
 %% Paths
-% local_connect = 'Z:\';
+file_server_path = '/gpfs01/born/animal/'; % path to born_animal
 
-serv_connect = '/gpfs01/born/animal/';
+
 dirProject    = 'Max/05_Downscaling/';
 dirAnalysis   = '03_Analysis/01_Pilot/';
 dirDat        = '02_Raw_Data/01_Pilot/01_Ephys/';
