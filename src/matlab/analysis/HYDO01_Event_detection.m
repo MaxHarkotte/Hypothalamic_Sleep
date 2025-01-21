@@ -1,121 +1,123 @@
 % Offline detection of SOs and spindles from surface EEG signal
 % Author: Max Harkotte (maximilian.harkotte@gmail.com)
 % uses detection toolbox by Niels Niethard and Jens Klinzing (2022)
-% Date: June 2024
+% Date: January 2025
 clear
 close all
 clc 
 
-%%
-id_nlx = '2024-05-21_10-28-00';
+% Takes in preprocessed data from HYDO_Preprocessing.m and runs 
+% event detection (SO, Spi, Ripples) on all channels
+
+% Requirements: 
+% - Signal Processing Toolbox
 
 %% Paths
-local_connect = 'Z:\';
-dirProject    = 'Max\05_Downscaling\';
-dirDat        = '03_Analysis\01_Pilot\02_Data\01_Downsampled_data\';
-dirHypno      = '03_Analysis\01_Pilot\02_Data\02_Sleep_scorings\';
+script_path = which('HYDO01_Event_detection.m');
+script_path = strrep(char(script_path), '\', '/');
+file_server_path = 'Z:/'; % cluster: '/gpfs01/born/animal/'; 
 
-% Add paths to necessary functions for event detection and to fieldtrip
-addpath(strcat(local_connect, dirProject, '03_Analysis\00_Pipelines\00_Resources\MATLAB\event_detector\')); % change dir to local if needed
+% Paths to toolboxes and functions
+root = strsplit(char(script_path),'src/');
+addpath(strcat(char(root(1)), 'src/functions/matlab/event_detector/')); 
+addpath(strcat(file_server_path, 'Hypothalamic_Sleep/fieldtrip/fieldtrip-20240722')); 
+ft_defaults
 
-%% Read in recordings
-current_dir = strcat(local_connect, dirProject, dirDat, id_nlx);
-cd(current_dir)
+clear script_path; 
+%% Recording information
+reference = readtable(strcat(file_server_path, 'Hypothalamic_Sleep/data/raw/reference.xlsx'));
 
-% EEG
-tmp_rec_EEG = load('EEG_EMG_downsampled.mat');
-rec_EEG = tmp_rec_EEG.rec_downsample;
+%% Select recordings for detection 
+selection = {'2024-05-21_10-28-00'};   
 
-% LFP
-tmp_rec_LFP = load('LFP_downsampled.mat');
-rec_LFP = tmp_rec_LFP.LFP_downsample;
-
-% Concatenate
-cfg = [];
-data_merged =  ft_appenddata(cfg, rec_EEG, rec_LFP);
-
-clear tmp_rec_EEG tmp_rec_LFP rec_EEG rec_LFP;
-
-% Exclude Channels
-cfg = [];
-cfg.channel = {'EEG_frontal', 'EEG_parietal', 'Probe_17'}';
-data_merged = ft_selectdata(cfg, data_merged);
-
-%%
-
-% recording infos
-fs                      = data_merged.fsample; % in Hz
-recording_length        = size(data_merged.trial{1,1}, 2); % in seconds
-data_merged.sampleinfo    = [1,recording_length];
-
-
-% Hypnogram 
-current_dir = strcat(local_connect, dirProject, dirHypno, id_nlx);
-cd(current_dir)
-
-tmp_hypno  = load('EEG_frontal.mat', 'SlStNew'); 
-hypno = double(tmp_hypno.SlStNew.codes(1:end,1));
-
-clear tmp_hypno 
-
-%% Event detection
-% Scoring params
-cfg                        = [];
-cfg.name                   = 'Hypothalamus Animal 1';
-cfg.scoring                = hypno;
-cfg.scoring_epoch_length   = 10; % scoring epoch changed to 2 seconds 
-cfg.code_NREM              = [2 4];
-cfg.code_REM               = 3;
-cfg.code_WAKE              = 1;
-% cfg.artfctdef              = artifact_snips;
-cfg.artfctpad			   = 0;	
-cfg.spectrum               = 1;					
-cfg.invertdata             = 0;
+%% Event detection parameters
+cfg_det                        = [];
+cfg_det.scoring_epoch_length   = 10; 
+cfg_det.code_NREM              = [2 4];
+cfg_det.code_REM               = 3;
+cfg_det.code_WAKE              = 1;
+cfg_det.artfctpad			   = 0;	
+cfg_det.spectrum               = 0;					
+cfg_det.invertdata             = 0;
 
 % SO detection params
-cfg.slo		               = 1;					
-cfg.slo_dur_min		       = 0.5;			
-cfg.slo_dur_max		       = 2.0;			
-% cfg.slo_thr		           = 1.5;				
-% cfg.slo_peak2peak_min      = 70;  % rec is in uV      
-cfg.slo_freq			   = [0.1 4];
-cfg.slo_filt_ord	       = 3;
-cfg.slo_rel_thr            = 33; % online threshold: 20 | offline analysis: 33
-cfg.slo_dur_max_down       = 0.300; %in s
-%cfg.slo_dur_min_down      = 0.060;
+cfg_det.slo		               = 0;					
+cfg_det.slo_dur_min		       = 0.5;			
+cfg_det.slo_dur_max		       = 2.0;			
+cfg_det.slo_freq			   = [0.1 4];
+cfg_det.slo_filt_ord	       = 3;
+cfg_det.slo_rel_thr            = 33; 
+cfg_det.slo_dur_max_down       = 0.300; %in s
 
 % Spindle detection params
-cfg.spi					   = 1;		
-cfg.spi_dur_min			   = [0.5 0.25];		
-cfg.spi_dur_max			   = [2.5 2.5];
-cfg.spi_thr(1,1)		   = 1.5;
-cfg.spi_thr(2,1)		   = 2;
-cfg.spi_thr(3,1)		   = 2.5;
-cfg.spi_thr_chan		   = [];
-cfg.spi_freq			   = [10 16];
-cfg.spi_peakdist_max	   = 0.125;
-cfg.spi_filt_ord	       = 6;
-cfg.spi_indiv			   = 0;
-%cfg.spi_indiv_win		   = 2;
-%cfg.spi_indiv_chan		   = [];
+cfg_det.spi					   = 1;		
+cfg_det.spi_dur_min			   = [0.5 0.25];		
+cfg_det.spi_dur_max			   = [2.5 2.5];
+cfg_det.spi_thr(1,1)		   = 1.5;
+cfg_det.spi_thr(2,1)		   = 2;
+cfg_det.spi_thr(3,1)		   = 2.5;
+cfg_det.spi_thr_chan		   = [];
+cfg_det.spi_freq			   = [10 16];
+cfg_det.spi_peakdist_max	   = 0.125;
+cfg_det.spi_filt_ord	       = 6;
+cfg_det.spi_indiv			   = 0;
 
 % Ripples 
-cfg.rip                    = 1;
-% cfg.rip_control_Chan.label = char(rec_analysis_info.Ripple_control_chan);
+cfg_det.rip                    = 0;
 
-% Run detection
-detection_output = detectEvents_V2(cfg, data_merged);
+%% Read in recordings and run event detection for each channel
 
-%% Save detections
+for iRec = 1:size(selection,2)
+    
+    % Recording information
+    rec_info         = reference(strcmp(reference.file, selection(iRec)), :);
+    recording_length = rec_info.rec_length*60; % in seconds
 
-if ~exist(strcat(local_connect, dirProject, '03_Analysis\01_Pilot\02_Data\03_Sleep_oscillation_detections\',  id_nlx), 'dir')
-    mkdir(strcat(local_connect, dirProject, '03_Analysis\01_Pilot\02_Data\03_Sleep_oscillation_detections\',  id_nlx))
+    % read in data and combine in one ft structure
+    cd(char(strcat(file_server_path, 'Hypothalamic_Sleep/data/processed/', rec_info.id, '/', rec_info.file, '/')))
+
+    cfg         = [];
+    cfg.dataset = strcat(char(rec_info.file), '_EEGEMG_250Hz.edf');
+    cfg.channel = {'EEG_frontal', 'EEG_parietal'};
+    tmp_EEGEMG  = ft_preprocessing(cfg);
+
+    cfg         = [];
+    cfg.dataset = strcat(char(rec_info.file), '_LFP_avg_250Hz.edf');
+    tmp_LFP     = ft_preprocessing(cfg);
+
+    cfg         = [];
+    rec         =  ft_appenddata(cfg, tmp_EEGEMG, tmp_LFP);
+
+    clear cfg tmp_LFP tmp_EEGEMG;
+
+    % Cut to correct length
+    fs             = rec.fsample; % in Hz
+    cfg            = [];
+    cfg.begsample  = 1;
+    cfg.endsample  = recording_length*fs;
+    rec            = ft_redefinetrial(cfg, rec);
+    rec.sampleinfo = [1,recording_length*fs];
+
+    clear cfg;
+
+    % Hypnogram 
+    cd(char(strcat(file_server_path, 'Hypothalamic_Sleep/data/scoring/', rec_info.id, '/', rec_info.file, '/')))
+
+    tmp_hypno       = load(strcat(char(rec_info.file), '_EEGEMG_250Hz.mat'), 'SlStNew'); 
+    hypno           = double(tmp_hypno.SlStNew.codes(1:recording_length/10,1));
+    cfg_det.scoring = hypno;
+
+    clear tmp_hypno hypno;
+
+    % Run event detection detection
+    detection_output = detectEvents_V2(cfg_det, rec);
+
+    % Save detections
+    if ~exist(char(strcat(char(root(1)), 'results/detections/', rec_info.id, '/', rec_info.file, '/')), 'dir')
+        mkdir(char(strcat(char(root(1)), 'results/detections/', rec_info.id, '/', rec_info.file, '/')))
+    end
+    
+    cd(char(strcat(char(root(1)), 'results/detections/', rec_info.id, '/', rec_info.file, '/')))
+    save('Detections','detection_output','-v7.3')
+
 end
-
-cd(strcat(local_connect, dirProject, '03_Analysis\01_Pilot\02_Data\03_Sleep_oscillation_detections\',  id_nlx))
-
-% Plot detections 
-plotDetectedEvents(detection_output, 'Detections.fig')
-
-% Save detections
-save('Detections','detection_output','-v7.3')
