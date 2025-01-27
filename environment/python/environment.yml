@@ -1,0 +1,30 @@
+name: hypo-sleep
+channels:
+- defaults
+- conda-forge
+dependencies:
+- "python>=3.10"
+- pip
+- bottleneck
+- numpy
+- numba
+- scipy
+- scikit-learn
+- scikit-image
+- matplotlib
+- xarray
+- pandas
+- dask
+- tqdm
+- statsmodels
+- jupyter
+- jupyterlab>=3.*
+- nb_conda
+- setuptools
+- autopep8
+- mat73
+- black
+- pip:
+  - "black[jupyter]"
+  - ghostipy
+  - spikeinterface>=0.99.1,<0.100
