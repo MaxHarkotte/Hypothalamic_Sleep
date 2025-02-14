@@ -20,4 +20,6 @@
     "files.trimFinalNewlines": true,
     "editor.acceptSuggestionOnEnter": "smart",
     "python.analysis.autoFormatStrings": true,
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "notebook.defaultFormatter": "ms-python.black-formatter",
 }

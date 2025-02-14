@@ -5,12 +5,13 @@ import psutil
 from scipy import signal
 import spikeinterface as si
 import spikeinterface.extractors as se
+import probeinterface as pi
 import ghostipy as gsp
 from pathlib import Path, PosixPath
 from typing import List, Literal
 
 
-def load_rec(recording_path, concatenate=True, channels=None):
+def load_rec(recording_path, probe=None, concatenate=True, channels=None):
     recording = se.read_neuralynx(recording_path)
     if recording.get_num_segments() > 1:
         if concatenate:
@@ -20,6 +21,14 @@ def load_rec(recording_path, concatenate=True, channels=None):
             concat_recording = si.ConcatenateSegmentRecording([recording])
             concat_recording.set_times(np.array(timestamps))
             recording = concat_recording
+    if probe is not None:
+        shank_1 = [0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23]
+        shank_2 = [8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31]
+        probe.set_device_channel_indices(np.concatenate([shank_1, shank_2]))
+        recording.set_probe(probe=probe, in_place=True)
+        recording.set_channel_groups(
+            np.concatenate([np.zeros(16, dtype=int), np.ones(16, dtype=int)])
+        )
     if channels:
         if channels == "all":
             recording = recording
@@ -30,7 +39,7 @@ def load_rec(recording_path, concatenate=True, channels=None):
     return recording
 
 
-def get_recording_path(base_path, animal, date):
+def get_recording_path(base_path, animal="", date=""):
     if not isinstance(base_path, PosixPath):
         base_path = Path(base_path)
     data_path = Path(base_path, animal, date)

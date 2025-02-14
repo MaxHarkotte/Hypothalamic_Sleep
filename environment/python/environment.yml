@@ -1,9 +1,9 @@
-name: hypo-sleep
+name: hypo-sleep-no-si
 channels:
 - defaults
 - conda-forge
 dependencies:
-- "python>=3.10"
+- "python>=3.10,<3.13"
 - pip
 - bottleneck
 - numpy
@@ -27,4 +27,4 @@ dependencies:
 - pip:
   - "black[jupyter]"
   - ghostipy
-  - spikeinterface>=0.99.1,<0.100
+  # - spikeinterface>=0.99.1,<0.100
