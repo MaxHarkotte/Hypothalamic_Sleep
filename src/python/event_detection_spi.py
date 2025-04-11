@@ -367,13 +367,13 @@ def detect_spindles(df, thr, channels, cfg, verbose=False):
 def get_lfp_spi_co_spectra(
     df: pd.DataFrame,
     raw_rec,
-    chunks,
     lfp_channels: Union[List[str | int], np.ndarray],
     spi_channel: Union[str, int],
+    chunks=None,
     eeg_rec=None,
     valid_spans=None,
-    time_window_duration: float = 10,
-    time_window_step: float = 1,
+    time_window_duration: float = 0.5,
+    time_window_step: float = 0.1,
     window: int = 4,
     filt_freq: Union[List, Tuple] = (1, 45),
     filt_order: int = 6,
@@ -405,26 +405,26 @@ def get_lfp_spi_co_spectra(
     """
     lfp_avg_spectra = {ch: None for ch in lfp_channels}
     time_arr = {ch: [] for ch in lfp_channels}
-    # if valid_spans is None:
-    #     chunk_size = int(time_window_duration * raw_rec.get_sampling_frequency())
-    #     n_chunks = int(raw_rec.get_num_samples() // chunk_size)
-    #     chunks = [(i * chunk_size, (i + 1) * chunk_size) for i in range(n_chunks)]
-    # else:
-    #     chunks = [
-    #         (
-    #             int(
-    #                 event.start
-    #                 + event.duration / 2
-    #                 - (window * raw_rec.get_sampling_frequency())
-    #             ),
-    #             int(
-    #                 event.start
-    #                 + event.duration / 2
-    #                 + (window * raw_rec.get_sampling_frequency())
-    #             ),
-    #         )
-    #         for (_, event) in valid_spans.iterrows()
-    #     ]
+    if valid_spans is None:
+        chunk_size = int(time_window_duration * raw_rec.get_sampling_frequency())
+        n_chunks = int(raw_rec.get_num_samples() // chunk_size)
+        chunks = [(i * chunk_size, (i + 1) * chunk_size) for i in range(n_chunks)]
+    else:
+        chunks = [
+            (
+                int(
+                    event.start
+                    + event.duration / 2
+                    - (window * raw_rec.get_sampling_frequency())
+                ),
+                int(
+                    event.start
+                    + event.duration / 2
+                    + (window * raw_rec.get_sampling_frequency())
+                ),
+            )
+            for (_, event) in valid_spans.iterrows()
+        ]
     # if get_spi_spectra:
     #     spi_avg_spectra = {ch: None for ch in spi_channels}
     # split_recording_dict = raw_rec.split_by("group")
@@ -452,18 +452,11 @@ def get_lfp_spi_co_spectra(
             ch_spectrum = []
             for start, stop in chunks:
                 # for ind, (_, event) in enumerate(valid_spans.iterrows()):
-                #     center_frame = event.start + event.duration / 2
+                center_frame = int((stop - start) / 2)
                 tmp_rec = filt_rec.frame_slice(
                     start_frame=start,
                     end_frame=stop,
                 )
-                # int(
-                #     center_frame - (window * filt_rec.get_sampling_frequency())
-                # ),
-                # end_frame=int(
-                #     center_frame + (window * filt_rec.get_sampling_frequency())
-                # ),
-                # )
                 tmp_trace = tmp_rec.get_traces(channel_ids=[ch], return_scaled=True)
                 mtm = Multitaper(
                     tmp_trace,
@@ -471,14 +464,10 @@ def get_lfp_spi_co_spectra(
                     time_window_duration=time_window_duration,
                     time_window_step=time_window_step,
                     start_time=df.time.loc[start],
+                    # df.time.loc[
+                    #     int(center_frame - (window * ref_rec.get_sampling_frequency()))
+                    # ],
                 )
-                #     start_time=df.time.loc[
-                #         int(
-                #             center_frame
-                #             - (window * ref_rec.get_sampling_frequency())
-                #         )
-                #     ],
-                # )
                 c = Connectivity(
                     fourier_coefficients=mtm.fft(),
                     expectation_type=expectation_type,
@@ -799,20 +788,8 @@ def plot_spectra(
     ref_method="local",
     plot_method=None,
     norm=True,
-    single=True,
-    sub_title="Wake to NREM Sleep Transition",
+    single=False,
 ):
-    SMALL_SIZE = 14
-    MEDIUM_SIZE = 16
-    BIGGER_SIZE = 18
-
-    plt.rc("font", size=SMALL_SIZE)  # controls default text sizes
-    plt.rc("axes", titlesize=MEDIUM_SIZE)  # fontsize of the axes title
-    plt.rc("axes", labelsize=MEDIUM_SIZE)  # fontsize of the x and y labels
-    plt.rc("xtick", labelsize=SMALL_SIZE)  # fontsize of the tick labels
-    plt.rc("ytick", labelsize=SMALL_SIZE)  # fontsize of the tick labels
-    plt.rc("legend", fontsize=SMALL_SIZE)  # legend fontsize
-    plt.rc("figure", titlesize=BIGGER_SIZE)
     freq_lims = [1, 45]
     plot_path = Path(output_path, "plots", itr_id)
     if not plot_path.exists():
@@ -831,7 +808,7 @@ def plot_spectra(
         save_path.mkdir(parents=True)
         if single:
             for itr, (event_spectra, tmp_time) in enumerate(zip(spectra, time_arr[ch])):
-                fig, ax = plt.subplots(figsize=(14, 6))
+                fig, ax = plt.subplots(figsize=(10, 6))
                 # avg_spectra = spectra.reshape(*shape, -1).mean(axis=0)
                 if plot_method == "zscore":
                     event_spectra = stats.zscore(event_spectra, axis=0, ddof=1)
@@ -882,7 +859,7 @@ def plot_spectra(
                         label="Spindles",
                     )
                 ax.set_title(
-                    f"{sub_title}Spectrogram\nChannel {int(ch):02d} - Span {itr:02d}",
+                    f"NREM Sleep Spectrogram\nHypo Channel {int(ch):02d} - Span {itr:02d}"
                 )
                 # ax.set_xlim(
                 #     [
@@ -891,19 +868,16 @@ def plot_spectra(
                 #     ]
                 # )
 
-                ax.set_xlabel("Time From Beginning of NREM Sleep (s)")  # , fontsize=16)
-                ax.set_ylabel("Frequency (Hz)")  # , fontsize=16)
+                ax.set_xlabel("Time From Beginning of NREM Sleep (s)")
+                ax.set_ylabel("Frequency (Hz)")
                 ax.set_ylim([1, 45])
-                ax.tick_params(axis="both", which="major")  # , labelsize=14)
-                cb = fig.colorbar(im, ax=ax, label="Power")
-                # cb.ax.set_label(label="Power")  # , size=14)
-                # cb.ax.tick_params(labelsize=8)
+                fig.colorbar(im, ax=ax, label="Power (A.U.)")
 
                 fig.tight_layout()
                 fig.savefig(
                     Path(
                         save_path,
-                        f"{sub_title.replace(" ", "-")}_spectra_{ref_method}-ref_{plot_method}_no-norm_no-overlap_{int(ch):02d}-itr{itr:02d}.png",
+                        f"NREM_state_spectra_{ref_method}-ref_{plot_method}_no-norm_no-overlap_{int(ch):02d}-itr{itr:02d}.png",
                     ),
                     dpi=400,
                     facecolor="w",
@@ -912,13 +886,15 @@ def plot_spectra(
                 )
                 plt.close(fig)
         else:
-            tmp_time = np.asarray(time_arr[ch][0])
-            fig, ax = plt.subplots(figsize=(15, 6))
+            tmp_time = time_arr[ch][0]
+            fig, ax = plt.subplots(figsize=(10, 6))
             if plot_method == "zscore":
+                avg_spectra = spectra.mean(axis=0).T
                 avg_spectra = stats.zscore(avg_spectra, axis=0, ddof=1)
             elif plot_method == "baseline_corr":
+                avg_spectra = spectra.mean(axis=0).T
                 avg_spectra = baseline_correction(
-                    avg_spectra, time_arr=time_arr, baseline_segment=(0, 1)
+                    avg_spectra, time_arr=tmp_time, baseline_segment=(0, 1)
                 )
             elif plot_method == "avg":
                 avg_spectra = spectra.mean(axis=0).T
@@ -933,6 +909,8 @@ def plot_spectra(
                 + np.nanstd(avg_spectra[freq_inds, :]) * 3,
                 1,
             )
+            vmin = 0.0
+            vmax = 2.0
             im = ax.pcolormesh(
                 tmp_time - window - tmp_time[0],
                 # time_arr - time_arr[0],
@@ -943,24 +921,26 @@ def plot_spectra(
                 vmax=vmax,
             )
 
-            ax.set_title(f"{sub_title} Event-Averaged Spectrogram\nChannel {ch}")
+            ax.set_title(
+                f"Cortical Sleep Spindle Event-Averaged Spectrogram\nHypo Channel {ch}"
+            )
             # ax.set_xlim(
             #     [
             #         -window + 5,
-            #         np.round(time_arr[: shape[1]][-1] - time_arr[0] - window, 1) - 5,
+            #         np.round(tmp_time[: shape[1]][-1] - tmp_time[0] - window, 1) - 5,
             #     ]
             # )
 
-            ax.set_xlabel("Time From Beginning of NREM Sleep (s)")
+            ax.set_xlabel("Time From Center of Sleep Spindle (s)")
             ax.set_ylabel("Frequency (Hz)")
             ax.set_ylim([1, 45])
-            fig.colorbar(im, ax=ax, label="Power")
+            fig.colorbar(im, ax=ax)
 
             fig.tight_layout()
             fig.savefig(
                 Path(
                     plot_path,
-                    f"{sub_title.replace(" ", "-")}avg_state_spectra_{ref_method}-ref_{plot_method}_norm_no_overlap_{int(ch):02d}.png",
+                    f"spi_event-avg-{ref_method}-ref_{plot_method}_no-norm_no-overlap_{int(ch):02d}.png",
                 ),
                 dpi=400,
                 facecolor="w",
@@ -1189,7 +1169,6 @@ class NumpyEncoder(json.JSONEncoder):
 def main():
     start_time = time.time()
     itr_id = str(uuid4())[:4]
-    print(f"itr_id: {itr_id}")
     parser = create_parser()
     args = parser.parse_args()
     verbose = eval(args.verbose)
@@ -1251,43 +1230,12 @@ def main():
         freq_max=high_cutoff,
         **{"filter_order": order},
     )
-
-    # lfp_rec = load_rec(
-    #     recording_path=rec_path,
-    #     probe=probe,
-    #     concatenate=True,
-    #     channels=None,
-    #     ret_lfp=True,
-    #     ret_eeg=False,
-    # )
-    # lfp_down_rec = spp.resample(lfp_rec, resample_rate=target_sampling_rate)
-    # lfp_down_rec = lfp_down_rec.frame_slice(
-    #     start_frame=0, end_frame=int(rec_length * target_sampling_rate)
-    # )
-    # lfp_down_filt_rec = spp.bandpass_filter(
-    #     lfp_down_rec,
-    #     freq_min=spi_band[0],
-    #     freq_max=spi_band[1],
-    #     **{"filter_order": order},
-    # )
-    # lfp_channels = args.lfp_channels
-    # if lfp_channels is None:
-    #     lfp_channels = lfp_down_rec.get_channel_ids()
-    # lfp_channels = [str(ch) if not isinstance(ch, str) else ch for ch in lfp_channels]
     scoring = load_scoring(scoring_path=rec_path)
 
     valid_spans, df, state_dict = get_ctx_spindles(
         down_filt_rec, scoring, channels=eeg_channels, use_mat=use_mat
     )
-    # if save:
-    #     valid_spans["SI"]["7"].to_csv(
-    #         Path(output_path, f"spindle_events_ch-07_{itr_id}.csv"),
-    #     )
-    #     with open(Path(output_path, f"state_dict_{itr_id}.json"), "w") as fp:
-    #         json.dump(state_dict, fp, cls=NumpyEncoder)
-    # return
     window = 120
-    sub_title = "NREM Sleep"
     if state:
         # chunks, valid_events = get_chunks(
         #     state_dict=state_dict,
@@ -1298,16 +1246,6 @@ def main():
         #     window=240,
         #     frame_size=480,
         #     overlap=overlap,
-        # )
-        # chunks, valid_events = get_chunks(
-        #     state_dict=state_dict,
-        #     rec_length=down_filt2.get_num_samples(),
-        #     Fs=target_sampling_rate,
-        #     state_trigger="REM",
-        #     offset=0,
-        #     window=60,
-        #     frame_size=120,
-        #     overlap=0,
         # )
         good_inds = np.where(
             state_dict["NREM"]["offset"] - state_dict["NREM"]["onset"]
@@ -1322,59 +1260,63 @@ def main():
         # ind_groups = closest_indices(chunks[:, 0], valid_events)
     eeg_spectra, time_arr, freqs, _ = get_lfp_spi_co_spectra(
         df=df,
-        chunks=chunks,
-        # valid_spans=valid_spans["SI"]["45"],
+        chunks=None,
+        valid_spans=valid_spans["SI"]["45"],
         raw_rec=down_filt2,
         lfp_channels=eeg_channels,
         filt_freq=lfp_filt_edge,
         spi_channel="45",
-        time_window_duration=10,
-        time_window_step=2,
-        window=10,
+        time_window_duration=0.5,
+        time_window_step=0.1,
+        window=4,
         ref_method="global",
         local_rad=None,
     )
-    if overlap is not None and overlap > 0:
-        tmp_spectra = {}
-        for ch, tmp_spec in eeg_spectra.items():
-            tmp_spectra[ch], time_arr = overlap_spectra(
-                tmp_spec, filt_timestamps[chunks[:, 0]], ind_groups, window=10
-            )
-        eeg_spectra = tmp_spectra
-    with open(
-        Path(
-            output_path,
-            f"nrem_spectra_{ref_method}-ref-{int(target_sampling_rate)}Hz_{itr_id}.json",
-        ),
-        "w",
-    ) as fp:
-        json.dump(eeg_spectra, fp, cls=NumpyEncoder)
-    np.savez(
-        Path(
-            output_path,
-            f"nrem_spectra_meta_{ref_method}-ref-{int(target_sampling_rate)}Hz_{itr_id}.npz",
-        ),
-        time=time_arr,
-        freqs=freqs,
-        ch_order=down_filt_rec.get_channel_ids(),
-    )
-
+    # if overlap is not None and overlap > 0:
+    #     tmp_spectra = {}
+    #     for ch, tmp_spec in eeg_spectra.items():
+    #         tmp_spectra[ch], time_arr = overlap_spectra(
+    #             tmp_spec, filt_timestamps[chunks[:, 0]], ind_groups, window=10
+    #         )
+    #     eeg_spectra = tmp_spectra
+    # with open(
+    #     Path(
+    #         output_path,
+    #         f"spindle_spectra_{ref_method}-ref-{int(target_sampling_rate)}Hz_{itr_id}.json",
+    #     ),
+    #     "w",
+    # ) as fp:
+    #     json.dump(lfp_spectra, fp, cls=NumpyEncoder)
+    # np.savez(
+    #     Path(
+    #         output_path,
+    #         f"spindle_spectra_meta_{ref_method}-ref-{int(target_sampling_rate)}Hz_{itr_id}.npz",
+    #     ),
+    #     time=time_arr,
+    #     freqs=freqs,
+    #     ch_order=plot_channels,
+    # )
     plot_spectra(
         lfp_spectra=eeg_spectra,
         ind_groups=ind_groups,
         channels=eeg_channels,
         itr_id=itr_id,
         time_arr=time_arr,  # lfp_timestamps[chunks[:, 0]],
-        events=valid_spans["SI"]["45"].start_time,
-        window=60,
+        events=None,  # valid_spans["SI"]["45"].start_time,
+        window=4,
         freqs=freqs,
         output_path=output_path,
         ref_method=ref_method,
-        plot_method=None,
+        plot_method="zscore",
         norm=False,
-        single=True,
-        sub_title=sub_title,
+        single=False,
     )
+    if save:
+        valid_spans["SI"]["45"].to_csv(
+            Path(output_path, f"spindle_events_ch-45_{itr_id}.csv"),
+        )
+        with open(Path(output_path, f"state_dict_{itr_id}.json"), "w") as fp:
+            json.dump(state_dict, fp, cls=NumpyEncoder)
     if spectra or PSD:
         lfp_rec = load_rec(
             recording_path=rec_path,
@@ -1422,25 +1364,25 @@ def main():
             #     }
             lfp_spectra, time_arr, freqs, _ = get_lfp_spi_co_spectra(
                 df=df,
-                chunks=chunks,
-                # valid_spans=valid_spans["SI"]["45"],
+                chunks=None,
+                valid_spans=valid_spans["SI"]["45"],
                 raw_rec=lfp_down_filt_rec,
                 lfp_channels=lfp_channels,
                 filt_freq=lfp_filt_edge,
                 spi_channel="45",
-                time_window_duration=10,
-                time_window_step=2,
-                window=60,
+                time_window_duration=0.5,
+                time_window_step=0.1,
+                window=4,
                 ref_method=ref_method,
                 local_rad=local_rad,
             )
-            if overlap is not None and overlap > 0:
-                tmp_spectra = {}
-                for ch, tmp_spec in lfp_spectra.items():
-                    tmp_spectra[ch], time_arr = overlap_spectra(
-                        tmp_spec, lfp_timestamps[chunks[:, 0]], ind_groups, window=10
-                    )
-                lfp_spectra = tmp_spectra
+            # if overlap is not None and overlap > 0:
+            #     tmp_spectra = {}
+            #     for ch, tmp_spec in lfp_spectra.items():
+            #         tmp_spectra[ch], time_arr = overlap_spectra(
+            #             tmp_spec, lfp_timestamps[chunks[:, 0]], ind_groups, window=10
+            #         )
+            #     lfp_spectra = tmp_spectra
             plot_channels = [
                 ch
                 for ch in spp.depth_order(lfp_down_rec).channel_ids[::-1]
@@ -1449,7 +1391,7 @@ def main():
             with open(
                 Path(
                     output_path,
-                    f"{sub_title.replace(" ", "-")}_spectra_{ref_method}-ref-{int(target_sampling_rate)}Hz_{itr_id}.json",
+                    f"spindle_spectra_{ref_method}-ref-{int(target_sampling_rate)}Hz_{itr_id}.json",
                 ),
                 "w",
             ) as fp:
@@ -1457,7 +1399,7 @@ def main():
             np.savez(
                 Path(
                     output_path,
-                    f"{sub_title.replace(" ", "-")}_spectra_meta_{ref_method}-ref-{int(target_sampling_rate)}Hz_{itr_id}.npz",
+                    f"spindle_spectra_meta_{ref_method}-ref-{int(target_sampling_rate)}Hz_{itr_id}.npz",
                 ),
                 time=time_arr,
                 freqs=freqs,
@@ -1469,15 +1411,14 @@ def main():
                 itr_id=itr_id,
                 channels=plot_channels,
                 time_arr=time_arr,  # lfp_timestamps[chunks[:, 0]],
-                events=valid_spans["SI"]["45"].start_time,
-                window=60,
+                events=None,  # valid_spans["SI"]["45"].start_time,
+                window=4,
                 freqs=freqs,
                 output_path=output_path,
                 ref_method=ref_method,
-                plot_method="avg",
+                plot_method="zscore",
                 norm=False,
                 single=False,
-                sub_title=sub_title,
             )
         if PSD:
             if state:

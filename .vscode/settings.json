@@ -7,11 +7,14 @@
         "editor.codeActionsOnSave": {
             "source.organizeImports": "explicit"
         },
+        // "editor.codeActionsOnSave": {
+        //     "source.organizeImports": "explicit"
+        // },
     },
     "python.formatting.provider": "black",
     "python.formatting.blackArgs": [
         "--line-length",
-        "88"
+        "79"
     ],
     "notebook.formatOnCellExecution": true,
     "notebook.formatOnSave.enabled": true,

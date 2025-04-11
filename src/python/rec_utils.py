@@ -11,7 +11,15 @@ from pathlib import Path, PosixPath
 from typing import List, Literal
 
 
-def load_rec(recording_path, probe=None, concatenate=True, channels=None):
+def load_rec(
+    recording_path,
+    probe=None,
+    concatenate=True,
+    channels=None,
+    ret_lfp=False,
+    ret_eeg=False,
+    eeg_chs=["37", "39"],
+):
     recording = se.read_neuralynx(recording_path)
     if recording.get_num_segments() > 1:
         if concatenate:
@@ -21,14 +29,20 @@ def load_rec(recording_path, probe=None, concatenate=True, channels=None):
             concat_recording = si.ConcatenateSegmentRecording([recording])
             concat_recording.set_times(np.array(timestamps))
             recording = concat_recording
+    if ret_lfp:
+        chs = recording.get_channel_ids()
+        lfp_chs = [ch for ch in chs if int(ch) < 32]
+        recording = recording.channel_slice(channel_ids=lfp_chs)
+    if ret_eeg:
+        if eeg_chs is None:
+            chs = recording.get_channel_ids()
+            eeg_chs = [ch for ch in chs if int(ch) >= 32]
+            recording = recording.channel_slice(channel_ids=eeg_chs)
     if probe is not None:
-        shank_1 = [0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23]
-        shank_2 = [8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31]
-        probe.set_device_channel_indices(np.concatenate([shank_1, shank_2]))
         recording.set_probe(probe=probe, in_place=True)
-        recording.set_channel_groups(
-            np.concatenate([np.zeros(16, dtype=int), np.ones(16, dtype=int)])
-        )
+        # recording.set_channel_groups(
+        #     np.concatenate([np.zeros(16, dtype=int), np.ones(16, dtype=int)])
+        # )
     if channels:
         if channels == "all":
             recording = recording
@@ -37,6 +51,13 @@ def load_rec(recording_path, probe=None, concatenate=True, channels=None):
                 raise ValueError(f">= 1 channel of {channels} not found in recording.")
             recording = recording.channel_slice(channel_ids=channels)
     return recording
+
+
+def get_probe(path, animal):
+    probe_path = list(Path(path, "probes").glob(f"*{animal}*.json"))
+    if len(probe_path) > 1:
+        raise ValueError(f"Multiple probes found for animal {animal}.")
+    return pi.read_probeinterface(probe_path[0]).probes[0]
 
 
 def get_recording_path(base_path, animal="", date=""):
