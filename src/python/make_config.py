@@ -201,7 +201,7 @@ class Config:
         function to return probe metadata file path
         """
         animal = self.animal_id if animal is None else animal
-        path = self.load_path if path is None else path
+        path = self.save_path if path is None else path
         probe_path = list(Path(path.parent).glob(f"*{animal}*.json"))
         if len(probe_path) == 0:
             raise FileNotFoundError(

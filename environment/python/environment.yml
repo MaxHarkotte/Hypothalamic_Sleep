@@ -26,5 +26,4 @@ dependencies:
 - black
 - pip:
   - "black[jupyter]"
-  - ghostipy
   # - spikeinterface>=0.99.1,<0.100

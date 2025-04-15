@@ -2,13 +2,9 @@
 
 import numpy as np
 import pandas as pd
-from scipy import signal
-from scipy.ndimage import uniform_filter1d
 from typing import Dict, List, Tuple
 from pathlib import Path
-import json
 import spikeinterface.preprocessing as spp
-from session_helper import NumpyEncoder
 
 
 def down_filt_rec(rec, rec_dur, **params):
@@ -201,163 +197,175 @@ def process_zero_crosses(raw_rec, phase_rec, crossings_df, **params):
     return processed_df
 
 
-def process_zero_crosses(raw_rec, phase_rec, zero_crossings, **params):
-    # slo_thrs = {}
-    SOGA = {}
-    SOGAPhase = {}
-    for ch in zero_crossings.keys():
-        zc = zero_crossings[ch][0].copy()  # (3, N)
+# def process_zero_crosses(raw_rec, phase_rec, zero_crossings, **params):
+#     # slo_thrs = {}
+#     SOGA = {}
+#     SOGAPhase = {}
+#     for ch in zero_crossings.keys():
+#         zc = zero_crossings[ch][0].copy()  # (3, N)
 
-        # --- Duration filters ---
-        # remove SOs with too short or too long down state duration
-        if params.get("slo_dur_max_down", False):
-            if params.get("slo_dur_min_down", False):
-                mask = np.where(
-                    np.logical_and(
-                        (zc[1] - zc[0])
-                        <= params.get("slo_dur_max_down") * params.get("Fs"),
-                        mask=(zc[1] - zc[0])
-                        >= params.get("slo_dur_min_down") * params.get("Fs"),
-                    )
-                )[0]
-            else:
-                mask = (zc[1] - zc[0]) <= params.get(
-                    "slo_dur_max_down"
-                ) * params.get("Fs")
-            zc = zc[:, mask]
-        elif params.get("slo_dur_min_down", False):
-            mask = (zc[1] - zc[0]) >= params.get(
-                "slo_dur_min_down"
-            ) * params.get("Fs")
-            zc = zc[:, mask]
-        # remove SOs with too short or too long overall duration
-        mask = np.where(
-            np.logical_and(
-                (zc[2] - zc[0])
-                <= params.get("slo_dur_max") * params.get("Fs"),
-                (zc[2] - zc[0])
-                >= params.get("slo_dur_min") * params.get("Fs"),
-            )
-        )[0]
-        zc = zc[:, mask]
-        zero_crossings[ch][0] = zc  # update
-        # --- Peak calculations ---
-        events = zero_crossings[ch][0].shape[1]
-        # --- Negative peak positions ---
-        neg_peak_indices = np.array(
-            [
-                (
-                    zc[0, idx]
-                    + np.argmin(
-                        raw_rec.get_traces(
-                            channel_ids=[ch],
-                            start_frame=zc[0, idx],
-                            end_frame=zc[1, idx],
-                            return_scaled=True,
-                        ).flatten()
-                    )
-                    if zc[1, idx] > zc[0, idx]
-                    else np.nan
-                )
-                for idx in range(events)
-            ]
-        )
-        neg_peaks = np.array(
-            [
-                (
-                    np.min(
-                        raw_rec.get_traces(
-                            channel_ids=[ch],
-                            start_frame=zc[0, idx],
-                            end_frame=zc[1, idx],
-                            return_scaled=True,
-                        ).flatten()
-                    )
-                    if zc[1, idx] > zc[0, idx]
-                    else np.nan
-                )
-                for idx in range(events)
-            ]
-        )
-        pos_peaks = np.array(
-            [
-                (
-                    np.max(
-                        raw_rec.get_traces(
-                            channel_ids=[ch],
-                            start_frame=zc[1, idx],
-                            end_frame=zc[2, idx],
-                            return_scaled=True,
-                        ).flatten()
-                    )
-                    if zc[2, idx] > zc[1, idx]
-                    else np.nan
-                )
-                for idx in range(events)
-            ]
-        )
+#         # --- Duration filters ---
+#         # remove SOs with too short or too long down state duration
+#         if params.get("slo_dur_max_down", False):
+#             if params.get("slo_dur_min_down", False):
+#                 mask = np.where(
+#                     np.logical_and(
+#                         (zc[1] - zc[0])
+#                         <= params.get("slo_dur_max_down") * params.get("Fs"),
+#                         mask=(zc[1] - zc[0])
+#                         >= params.get("slo_dur_min_down") * params.get("Fs"),
+#                     )
+#                 )[0]
+#             else:
+#                 mask = (zc[1] - zc[0]) <= params.get(
+#                     "slo_dur_max_down"
+#                 ) * params.get("Fs")
+#             zc = zc[:, mask]
+#         elif params.get("slo_dur_min_down", False):
+#             mask = (zc[1] - zc[0]) >= params.get(
+#                 "slo_dur_min_down"
+#             ) * params.get("Fs")
+#             zc = zc[:, mask]
+#         # remove SOs with too short or too long overall duration
+#         mask = np.where(
+#             np.logical_and(
+#                 (zc[2] - zc[0])
+#                 <= params.get("slo_dur_max") * params.get("Fs"),
+#                 (zc[2] - zc[0])
+#                 >= params.get("slo_dur_min") * params.get("Fs"),
+#             )
+#         )[0]
+#         zc = zc[:, mask]
+#         zero_crossings[ch][0] = zc  # update
+#         # --- Peak calculations ---
+#         events = zero_crossings[ch][0].shape[1]
+#         # --- Negative peak positions ---
+#         neg_peak_indices = np.array(
+#             [
+#                 (
+#                     zc[0, idx]
+#                     + np.argmin(
+#                         raw_rec.get_traces(
+#                             channel_ids=[ch],
+#                             start_frame=zc[0, idx],
+#                             end_frame=zc[1, idx],
+#                             return_scaled=True,
+#                         ).flatten()
+#                     )
+#                     if zc[1, idx] > zc[0, idx]
+#                     else np.nan
+#                 )
+#                 for idx in range(events)
+#             ]
+#         )
+#         neg_peaks = np.array(
+#             [
+#                 (
+#                     np.min(
+#                         raw_rec.get_traces(
+#                             channel_ids=[ch],
+#                             start_frame=zc[0, idx],
+#                             end_frame=zc[1, idx],
+#                             return_scaled=True,
+#                         ).flatten()
+#                     )
+#                     if zc[1, idx] > zc[0, idx]
+#                     else np.nan
+#                 )
+#                 for idx in range(events)
+#             ]
+#         )
+#         pos_peaks = np.array(
+#             [
+#                 (
+#                     np.max(
+#                         raw_rec.get_traces(
+#                             channel_ids=[ch],
+#                             start_frame=zc[1, idx],
+#                             end_frame=zc[2, idx],
+#                             return_scaled=True,
+#                         ).flatten()
+#                     )
+#                     if zc[2, idx] > zc[1, idx]
+#                     else np.nan
+#                 )
+#                 for idx in range(events)
+#             ]
+#         )
 
-        peak_to_peak = np.abs(neg_peaks) + pos_peaks
+#         peak_to_peak = np.abs(neg_peaks) + pos_peaks
 
-        # Apply relative threshold if given
-        # if params.get("slo_rel_thr", False):
-        #     threshold = np.percentile(neg_peaks, params.get("slo_rel_thr"))
-        #     keep_mask = neg_peaks <= threshold
-        #     zc = zc[:, keep_mask]
-        #     neg_peaks = neg_peaks[keep_mask]
-        #     pos_peaks = pos_peaks[keep_mask]
-        #     peak_to_peak = peak_to_peak[keep_mask]
-        #     slo_thrs[ch] = threshold
-        # else:
-        #     slo_thrs[ch] = slo_thresh
+#         # Apply relative threshold if given
+#         # if params.get("slo_rel_thr", False):
+#         #     threshold = np.percentile(neg_peaks, params.get("slo_rel_thr"))
+#         #     keep_mask = neg_peaks <= threshold
+#         #     zc = zc[:, keep_mask]
+#         #     neg_peaks = neg_peaks[keep_mask]
+#         #     pos_peaks = pos_peaks[keep_mask]
+#         #     peak_to_peak = peak_to_peak[keep_mask]
+#         #     slo_thrs[ch] = threshold
+#         # else:
+#         #     slo_thrs[ch] = slo_thresh
 
-        # --- Extract waveforms ---
-        twindow = 2.5  # in seconds # TODO: should this be a parameter?
-        sample_window = np.round(twindow * params.get("Fs"), 0).astype(int)
-        waveform_length = sample_window * 2 + 1
+#         # --- Extract waveforms ---
+#         twindow = 2.5  # in seconds # TODO: should this be a parameter?
+#         sample_window = np.round(twindow * params.get("Fs"), 0).astype(int)
+#         waveform_length = sample_window * 2 + 1
 
-        # Initialize arrays
-        SOGA_tmp = np.full((len(neg_peak_indices), waveform_length), np.nan)
-        SOGAPhase_tmp = np.full_like(SOGA_tmp, np.nan)
+#         # Initialize arrays
+#         SOGA_tmp = np.full((len(neg_peak_indices), waveform_length), np.nan)
+#         SOGAPhase_tmp = np.full_like(SOGA_tmp, np.nan)
 
-        # Filter valid indices (not too close to end)
-        valid_idx = np.where(
-            (neg_peak_indices + sample_window + 1 < raw_rec.get_num_samples())
-            & (neg_peak_indices - sample_window >= 0)
-        )[0]
+#         # Filter valid indices (not too close to end)
+#         valid_idx = np.where(
+#             (neg_peak_indices + sample_window + 1 < raw_rec.get_num_samples())
+#             & (neg_peak_indices - sample_window >= 0)
+#         )[0]
 
-        # Populate waveforms
-        for i, idx in enumerate(valid_idx):
-            start = neg_peak_indices[idx] - sample_window
-            end = neg_peak_indices[idx] + sample_window + 1
-            if start >= 0 and end <= raw_rec.get_num_samples():
-                SOGA_tmp[i, :] = raw_rec.get_traces(
-                    channel_ids=[ch],
-                    start_frame=start,
-                    end_frame=end,
-                    return_scaled=True,
-                ).flatten()
-                SOGAPhase_tmp[i, :] = phase_rec.get_traces(
-                    channel_ids=[ch],
-                    start_frame=start,
-                    end_frame=end,
-                    return_scaled=True,
-                ).flatten()
-            else:
-                neg_peak_indices[idx] = np.nan
-                zc[:, idx] = np.nan
-                peak_to_peak[idx] = np.nan
-                pos_peaks[idx] = np.nan
-        zero_crossings[ch][0] = zc
-        SOGA[ch] = SOGA_tmp
-        SOGAPhase[ch] = SOGAPhase_tmp
-    return zero_crossings, SOGA, SOGAPhase
+#         # Populate waveforms
+#         for i, idx in enumerate(valid_idx):
+#             start = neg_peak_indices[idx] - sample_window
+#             end = neg_peak_indices[idx] + sample_window + 1
+#             if start >= 0 and end <= raw_rec.get_num_samples():
+#                 SOGA_tmp[i, :] = raw_rec.get_traces(
+#                     channel_ids=[ch],
+#                     start_frame=start,
+#                     end_frame=end,
+#                     return_scaled=True,
+#                 ).flatten()
+#                 SOGAPhase_tmp[i, :] = phase_rec.get_traces(
+#                     channel_ids=[ch],
+#                     start_frame=start,
+#                     end_frame=end,
+#                     return_scaled=True,
+#                 ).flatten()
+#             else:
+#                 neg_peak_indices[idx] = np.nan
+#                 zc[:, idx] = np.nan
+#                 peak_to_peak[idx] = np.nan
+#                 pos_peaks[idx] = np.nan
+#         zero_crossings[ch][0] = zc
+#         SOGA[ch] = SOGA_tmp
+#         SOGAPhase[ch] = SOGAPhase_tmp
+#     return zero_crossings, SOGA, SOGAPhase
 
 
 def run(manager, **params):
-    down_filt_rec(
+    raw_rec, phase_rec = down_filt_rec(
         manager.ctx_rec,
         rec_dur=manager.rec_dur,
         **params,
     )
-    pass
+    so_df = detect_slow_oscs(manager, raw_rec, **params)
+    proc_so_df = process_zero_crosses(
+        manager, raw_rec, phase_rec, so_df, **params
+    )
+    if params.get("save", False):
+        save_path = Path(manager.config.get("output_path"), "SO")
+        save_path.mkdir(parents=True, exist_ok=True)
+        proc_so_df.to_csv(
+            Path(save_path, f"so-df_{manager.config.get("config_id")}.csv"),
+            index=False,
+            header=True,
+        )
+    return proc_so_df
