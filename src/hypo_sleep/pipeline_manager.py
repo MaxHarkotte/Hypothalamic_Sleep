@@ -1,9 +1,9 @@
-from session_manager import Session
-from pipelines import spindle_detection, event_spectra, so_detection, so_spectral
 import numpy as np
 import json
 from pathlib import Path
-from session_helper import NumpyEncoder
+from .session_manager import Session
+from .pipelines import spindle_detection, event_spectra, so_detection, so_spectral
+from .session_helper import NumpyEncoder
 
 
 class PipelineManager(Session):

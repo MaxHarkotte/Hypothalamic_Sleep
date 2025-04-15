@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple
 from pathlib import Path
 import json
 import spikeinterface.preprocessing as spp
-from session_helper import NumpyEncoder
+from ..session_helper import NumpyEncoder
 
 
 # def get_ctx_spindles(rec, state_dict, channels=None, **params):
@@ -155,6 +155,7 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
     if verbose:
         [(ch, len(spans)) for val in valid_spans.values() for ch, spans in val.items()]
     return valid_spans, df
+
 
 def get_spi_density(manager, df, valid_spans, channels, **params):
     pass

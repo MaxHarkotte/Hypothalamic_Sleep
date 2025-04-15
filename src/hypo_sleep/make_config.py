@@ -9,14 +9,14 @@ from datetime import datetime as dt
 
 
 class Config:
-    def __init__(self, path, animal_id, date):
+    def __init__(self, data_path, save_path, animal_id, date):
         self.animal_id = animal_id
         self.date = date
         self.load_path = get_path(
-            path, animal_id, date, data=True, exists=True
+            data_path, animal_id, date, data=True, exists=True
         )
         self.save_path = get_path(
-            path, animal_id, date, data=False, exists=False
+            save_path, animal_id, date, data=False, exists=False
         )
 
     def make_default_config(
@@ -138,15 +138,14 @@ class Config:
                     "parameters": {
                         "Fs": 250,  # Hz
                         "filter_edges": [0.1, 4],
-                        "filter_order": 6,
+                        "filter_order": 3,
                         "channels": rec_info["ctx_channels"],
                         "slo_dur_min": 0.5,  # seconds
                         "slo_dur_max": 2.0,  # seconds
-                        "slo_thr": 1.5,  # SDs
-                        "slo_peak2peak_min": 0.7,
-                        "slo_freq": [0.1, 3.5],  # Hz
-                        "slo_filt_ord": 3,
-                        "slo_rel_thr": None,
+                        # "slo_dur_max_down": 0.300,  # seconds
+                        "slo_rel_thr": 33,
+                        # "slo_thr": 1.5,  # SDs
+                        # "slo_peak2peak_min": 0.7,
                         "save": True,
                     },
                 },
@@ -183,6 +182,8 @@ class Config:
         json_file = Path(
             self.save_path, "analysis_configs", f"config_{self.config_id}.json"
         )
+        if json_file.parent.exists() is False:
+            json_file.parent.mkdir(parents=True, exist_ok=True)
         with open(json_file.as_posix(), "w") as f:
             json.dump(self.config, f, indent=4)
         print("Config saved to", json_file)
@@ -232,10 +233,13 @@ class Config:
 
 
 def get_path(base_path, animal="", date="", data=True, exists=True):
-    stem = "data" if data else "processed_data"
+    stem = None if data else "processed_data"
     if not isinstance(base_path, PosixPath):
         base_path = Path(base_path)
-    data_path = Path(base_path, stem, animal, date)
+    if stem is not None:
+        data_path = Path(base_path, stem, animal, date)
+    else:
+        data_path = Path(base_path, animal, date)
     if not data_path.exists() and exists:
         raise ValueError(f"Data path {data_path} does not exist.")
     elif not data_path.exists() and not exists:
@@ -245,7 +249,8 @@ def get_path(base_path, animal="", date="", data=True, exists=True):
 
 def main():
     config = Config(
-        path="/home/born-animal/Desktop/",
+        data_path="/gpfs01/born/animal/Hypothalamic_Sleep/data/raw/",
+        save_path="/gpfs01/born/animal/DanielG/hypo_sleep/",
         animal_id="HYDO03",
         date="2025-02-18_09-19-26",
     )
