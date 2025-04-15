@@ -7,7 +7,7 @@ import spikeinterface.full as si
 import spikeinterface.preprocessing as spp
 import probeinterface as pi
 import mat73
-from session_helper import make_state_dict, source_to_func
+from .session_helper import make_state_dict, source_to_func
 
 
 class Session:
