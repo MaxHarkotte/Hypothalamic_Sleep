@@ -9,6 +9,7 @@ import probeinterface as pi
 import ghostipy as gsp
 from pathlib import Path, PosixPath
 from typing import List, Literal
+from tqdm import tqdm
 
 
 def load_rec(
@@ -144,6 +145,7 @@ def filter_data(
     target_fs=None,
     decimation: int = None,
     channels=None,
+    verbose=True,
 ):
 
     if channels is None:
@@ -159,11 +161,23 @@ def filter_data(
         data_on_disk = np.zeros(
             (len(channels), n_samples), dtype=recording.get_dtype()
         )
-        for i, ch in enumerate(channels):
-            data_on_disk[i, :] = recording.get_traces(
-                channel_ids=[ch],
-            ).flatten()
+        if verbose:
+            for i, ch in tqdm(
+                enumerate(channels),
+                desc="Loading channels",
+                total=len(channels),
+            ):
+                data_on_disk[i, :] = recording.get_traces(
+                    channel_ids=[ch],
+                ).flatten()
+        else:
+            for i, ch in enumerate(channels):
+                data_on_disk[i, :] = recording.get_traces(
+                    channel_ids=[ch],
+                ).flatten()
     else:
+        if verbose:
+            print(f"Loading all channels {channels} into memory.")
         data_on_disk = recording.get_traces(channel_ids=channels)
     n_dim = len(data_on_disk.shape)
     input_dim_restrictions = [None] * n_dim
@@ -174,6 +188,8 @@ def filter_data(
     output_offsets = [0]
     filter_delay = (len(filter_coeff) - 1) // 2
     if rec_disk_mem < ram_capacity:
+        if verbose:
+            print("getting filter shape")
         for start, stop in valid_times:
             frm, to = time_bound_check(start, stop, timestamps, n_samples)
             if np.isclose(frm, to, rtol=0, atol=1e-8):
@@ -198,6 +214,8 @@ def filter_data(
         indices = np.array(indices, ndmin=2)
         ts_offset = 0
         for i, (start, stop) in enumerate(indices):
+            if verbose:
+                print("filtering in memory")
             extracted_ts = timestamps[start:stop:decimation]
             new_timestamps[ts_offset : ts_offset + len(extracted_ts)] = (
                 extracted_ts
