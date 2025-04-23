@@ -156,10 +156,15 @@ def filter_data(
     ram_capacity = psutil.virtual_memory().available / (1024**3) * 0.9
     rec_disk_mem = recording.get_memory_size() / (1024**3)
     if len(channels) > 2:
-        import pdb
-
-        pdb.set_trace()
-    data_on_disk = recording.get_traces(channel_ids=channels)
+        data_on_disk = np.zeros(
+            (len(channels), n_samples), dtype=recording.get_dtype()
+        )
+        for i, ch in enumerate(channels):
+            data_on_disk[i, :] = recording.get_traces(
+                channel_ids=[ch],
+            ).flatten()
+    else:
+        data_on_disk = recording.get_traces(channel_ids=channels)
     n_dim = len(data_on_disk.shape)
     input_dim_restrictions = [None] * n_dim
     input_dim_restrictions[1] = np.s_[elecs]
