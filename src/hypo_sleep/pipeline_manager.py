@@ -1,9 +1,11 @@
 import numpy as np
 import json
 from pathlib import Path
-from .session_manager import Session
-from .pipelines import spindle_detection, event_spectra, so_detection, so_spectral
-from .session_helper import NumpyEncoder
+from hypo_sleep.session_manager import Session
+from hypo_sleep.pipelines import spindle_detection
+from hypo_sleep.pipelines import so_detection_time as so_detection
+from hypo_sleep.pipelines import event_spectra_time as event_spectra
+from hypo_sleep.session_helper import NumpyEncoder
 
 
 class PipelineManager(Session):
@@ -36,7 +38,8 @@ class PipelineManager(Session):
     def save(self):
         with open(
             Path(
-                self.config["output_path"], f"{self.config['config_id']}_results.json"
+                self.config["output_path"],
+                f"{self.config['config_id']}_results.json",
             ),
             "r",
         ) as f:
@@ -49,7 +52,7 @@ def main():
         path="/home/born-animal/Desktop/processed_data/",
         animal_id="HYDO03",
         date="2025-02-18_09-19-26",
-        config_id="aa9b",
+        config_id="6e8f",
     )
 
     results = pipeline.run()

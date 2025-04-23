@@ -18,6 +18,7 @@ class Config:
         self.save_path = get_path(
             save_path, animal_id, date, data=False, exists=False
         )
+        print(f"load_path: {self.load_path}\nsave_path: {self.save_path}")
 
     def make_default_config(
         self,
@@ -64,7 +65,7 @@ class Config:
                         "thr_chan": [],
                         "freq": [10, 16],
                         "peakdist_max": 0.125,
-                        "filter_edges": [10, 16],
+                        "filter_coeffs": [9, 10, 16, 17],
                         "filter_order": 6,
                         "ref_method": "global",
                         "save": True,
@@ -75,7 +76,7 @@ class Config:
                     "pipeline": "event_spectra",
                     "parameters": {
                         "Fs": 250,  # Hz
-                        "filter_edges": [0.5, 120],
+                        "filter_coeffs": [0.1, 0.5, 120, 122],
                         "filter_order": 6,
                         "spectra_window": 0.5,  # seconds
                         "spectra_overlap": 0.1,  # seconds
@@ -96,7 +97,7 @@ class Config:
                     "pipeline": "event_spectra",
                     "parameters": {
                         "Fs": 250,  # Hz
-                        "filter_edges": [0.5, 120],
+                        "filter_coeffs": [0.1, 0.5, 120, 122],
                         "filter_order": 6,
                         "spectra_window": 0.5,  # seconds
                         "spectra_overlap": 0.1,  # seconds
@@ -117,7 +118,7 @@ class Config:
                     "pipeline": "event_spectra",
                     "parameters": {
                         "Fs": 250,  # Hz
-                        "filter_edges": [0.5, 120],
+                        "filter_coeffs": [0.1, 0.5, 120, 122],
                         "filter_order": 6,
                         "spectra_window": 10,  # seconds
                         "spectra_overlap": 2,  # seconds
@@ -137,7 +138,7 @@ class Config:
                     "pipeline": "SO_detection",
                     "parameters": {
                         "Fs": 250,  # Hz
-                        "filter_edges": [0.1, 4],
+                        "filter_coeffs": [0.01, 0.1, 4, 4.5],
                         "filter_order": 3,
                         "channels": rec_info["ctx_channels"],
                         "slo_dur_min": 0.5,  # seconds
@@ -146,6 +147,46 @@ class Config:
                         "slo_rel_thr": 33,
                         # "slo_thr": 1.5,  # SDs
                         # "slo_peak2peak_min": 0.7,
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "event_spectra",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_coeffs": [0.1, 0.5, 120, 122],
+                        "filter_order": 6,
+                        "spectra_window": 0.5,  # seconds
+                        "spectra_overlap": 0.1,  # seconds
+                        "window": 5,  # seconds
+                        "trigger": "so-peak",
+                        "window_shift": 0,
+                        "spectra_chs": ["1", "31"],
+                        "PSD": False,
+                        "spectrogram": True,
+                        "region": "hyp",
+                        "ref_method": "global",
+                        "plot": True,
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "event_spectra",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_coeffs": [0.1, 0.5, 120, 122],
+                        "filter_order": 6,
+                        "spectra_window": 0.5,  # seconds
+                        "spectra_overlap": 0.1,  # seconds
+                        "window": 5,  # seconds
+                        "trigger": "so-peak",
+                        "window_shift": 0,
+                        "spectra_chs": ["1", "31"],
+                        "PSD": False,
+                        "spectrogram": True,
+                        "region": "ctx",
+                        "ref_method": "global",
+                        "plot": True,
                         "save": True,
                     },
                 },
@@ -233,13 +274,10 @@ class Config:
 
 
 def get_path(base_path, animal="", date="", data=True, exists=True):
-    stem = None if data else "processed_data"
+    stem = "data" if data else "processed_data"
     if not isinstance(base_path, PosixPath):
         base_path = Path(base_path)
-    if stem is not None:
-        data_path = Path(base_path, stem, animal, date)
-    else:
-        data_path = Path(base_path, animal, date)
+    data_path = Path(base_path, stem, animal, date)
     if not data_path.exists() and exists:
         raise ValueError(f"Data path {data_path} does not exist.")
     elif not data_path.exists() and not exists:
@@ -249,8 +287,10 @@ def get_path(base_path, animal="", date="", data=True, exists=True):
 
 def main():
     config = Config(
-        data_path="/gpfs01/born/animal/Hypothalamic_Sleep/data/raw/",
-        save_path="/gpfs01/born/animal/DanielG/hypo_sleep/",
+        data_path="/home/born-animal/Desktop/",
+        save_path="/home/born-animal/Desktop/",
+        # data_path="/gpfs01/born/animal/Hypothalamic_Sleep/data/raw/",
+        # save_path="/gpfs01/born/animal/DanielG/hypo_sleep/",
         animal_id="HYDO03",
         date="2025-02-18_09-19-26",
     )

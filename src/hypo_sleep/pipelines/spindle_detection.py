@@ -9,6 +9,7 @@ from pathlib import Path
 import json
 import spikeinterface.preprocessing as spp
 from ..session_helper import NumpyEncoder
+from ..rec_utils import get_filter_coeff, filter_data, get_valid_times
 
 
 # def get_ctx_spindles(rec, state_dict, channels=None, **params):
@@ -18,14 +19,24 @@ from ..session_helper import NumpyEncoder
 
 def down_filt_rec(rec, rec_dur, **params):
     rec = spp.resample(rec, resample_rate=params["Fs"])
-    rec = rec.frame_slice(start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"]))
-    rec = spp.bandpass_filter(
+    valid_times = get_valid_times(rec)
+    filter_coeffs = get_filter_coeff(params["Fs"], params["filter_coeffs"])
+    filt_rec = filter_data(
         rec,
-        freq_min=params["filter_edges"][0],
-        freq_max=params["filter_edges"][1],
-        **{"filter_order": params["filter_order"]},
+        filter_coeffs,
+        valid_times,
+        target_fs=params["Fs"],
     )
-    return rec
+    filt_rec = filt_rec.frame_slice(
+        start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"])
+    )
+    # rec = spp.bandpass_filter(
+    #     rec,
+    #     freq_min=params["filter_edges"][0],
+    #     freq_max=params["filter_edges"][1],
+    #     **{"filter_order": params["filter_order"]},
+    # )
+    return filt_rec
 
 
 def make_spi_df(filt_rec, channels, state_dict, **params):
@@ -49,6 +60,7 @@ def make_spi_df(filt_rec, channels, state_dict, **params):
         )
     df["NREM"] = state_dict["NREM"]["mask"]
     df["time"] = filt_rec.get_times()
+    df.set_index("time", inplace=True)
     thr = {
         ch: (
             np.asarray(params.get("thr"))
@@ -62,31 +74,36 @@ def make_spi_df(filt_rec, channels, state_dict, **params):
 def touches_mask_edge(grouped, mask_edges, group_id):
     row = grouped.loc[group_id]
     mask_row = mask_edges.loc[row["mask_group"]]
-    return row["start"] == mask_row["mask_start"] or row["end"] == mask_row["mask_end"]
+    return (
+        row["start"] == mask_row["mask_start"]
+        or row["end"] == mask_row["mask_end"]
+    )
 
 
 def detect_spindles(df, thr, channels, verbose=False, **params):
-    min_dur_1 = params["dur_min"][0] * params["Fs"]
-    max_dur_1 = params["dur_max"][0] * params["Fs"]
+    min_dur_1 = params["dur_min"][0]  # * params["Fs"]
+    max_dur_1 = params["dur_max"][0]  # * params["Fs"]
 
-    min_dur_2 = params["dur_min"][1] * params["Fs"]
-    max_dur_2 = params["dur_max"][1] * params["Fs"]
+    min_dur_2 = params["dur_min"][1]  # * params["Fs"]
+    max_dur_2 = params["dur_max"][1]  # * params["Fs"]
     valid_spans = {}
 
     valid_spans = {}
     for channel in channels:
         tmp_df = df[channel]
-        tmp_df.loc[:, "mask_group"] = (df["NREM"] != df["NREM"].shift()).cumsum()
+        tmp_df.loc[:, "mask_group"] = (
+            df["NREM"] != df["NREM"].shift()
+        ).cumsum()
         tmp_df.loc[~df["NREM"], "mask_group"] = pd.NA
-        tmp_df.loc[:, "above_thr_1"] = (tmp_df.spi_amp_smooth > thr[channel][0]) & df[
-            "NREM"
-        ]
-        tmp_df.loc[:, "above_thr_2"] = (tmp_df.spi_amp_smooth > thr[channel][1]) & df[
-            "NREM"
-        ]
-        tmp_df.loc[:, "above_thr_3"] = (tmp_df.spi_amp_smooth > thr[channel][2]) & df[
-            "NREM"
-        ]
+        tmp_df.loc[:, "above_thr_1"] = (
+            tmp_df.spi_amp_smooth > thr[channel][0]
+        ) & df["NREM"]
+        tmp_df.loc[:, "above_thr_2"] = (
+            tmp_df.spi_amp_smooth > thr[channel][1]
+        ) & df["NREM"]
+        tmp_df.loc[:, "above_thr_3"] = (
+            tmp_df.spi_amp_smooth > thr[channel][2]
+        ) & df["NREM"]
         tmp_df.loc[:, "group"] = (
             tmp_df.above_thr_1 != tmp_df.above_thr_1.shift()
         ).cumsum()
@@ -96,8 +113,14 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
             tmp_df[tmp_df["above_thr_1"]]
             .groupby("group")
             .agg(
-                start=("spi_amp_smooth", lambda x: x.index[0]),  # First timestamp
-                end=("spi_amp_smooth", lambda x: x.index[-1]),  # Last timestamp
+                start=(
+                    "spi_amp_smooth",
+                    lambda x: x.index[0],
+                ),  # First timestamp
+                end=(
+                    "spi_amp_smooth",
+                    lambda x: x.index[-1],
+                ),  # Last timestamp
                 duration=(
                     "spi_amp_smooth",
                     lambda x: x.index[-1] - x.index[0],
@@ -106,9 +129,12 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
             )
         )
         valid_groups_1 = grouped.index[
-            (grouped["duration"] >= min_dur_1) & (grouped["duration"] <= max_dur_1)
+            (grouped["duration"] >= min_dur_1)
+            & (grouped["duration"] <= max_dur_1)
         ]
-        tmp_df.loc[:, "valid_thr_1_span"] = tmp_df["group"].isin(valid_groups_1)
+        tmp_df.loc[:, "valid_thr_1_span"] = tmp_df["group"].isin(
+            valid_groups_1
+        )
         tmp_df.loc[:, "above_thr_2_group"] = (
             tmp_df["above_thr_2"] != tmp_df["above_thr_2"].shift()
         ).cumsum()
@@ -139,21 +165,29 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
         )
 
         valid_groups_final = [
-            g for g in valid_groups_3 if not touches_mask_edge(grouped, mask_edges, g)
+            g
+            for g in valid_groups_3
+            if not touches_mask_edge(grouped, mask_edges, g)
         ]
         tmp_df["valid_span"] = tmp_df["group"].isin(valid_groups_final)
-        valid_spans[channel] = grouped.loc[valid_groups_final, ["start", "end"]]
+        valid_spans[channel] = grouped.loc[
+            valid_groups_final, ["start", "end"]
+        ]
         valid_spans[channel]["duration"] = (
             valid_spans[channel]["end"] - valid_spans[channel]["start"]
         )
-        valid_spans[channel]["start_time"] = (
-            df["time"].iloc[valid_spans[channel]["start"]].values
-        )
-        valid_spans[channel]["end_time"] = (
-            df["time"].iloc[valid_spans[channel]["end"]].values
-        )
+        # valid_spans[channel]["start_time"] = df.index.iloc[
+        #     valid_spans[channel]["start"]
+        # ].values
+        # valid_spans[channel]["end_time"] = df.index.iloc[
+        #     valid_spans[channel]["end"]
+        # ].values
     if verbose:
-        [(ch, len(spans)) for val in valid_spans.values() for ch, spans in val.items()]
+        [
+            (ch, len(spans))
+            for val in valid_spans.values()
+            for ch, spans in val.items()
+        ]
     return valid_spans, df
 
 

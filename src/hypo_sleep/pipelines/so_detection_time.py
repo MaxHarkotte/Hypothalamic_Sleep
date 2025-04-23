@@ -51,11 +51,14 @@ def detect_slow_oscs(manager, rec, debug=False, **params):
             "end_crossing": [],
         }
         trace = rec.get_traces(channel_ids=[ch], return_scaled=True).flatten()
-        for onset_idx, offset_idx in zip(
-            manager.state_dict["NREM"]["onset"],
-            manager.state_dict["NREM"]["offset"],
+        for onset, offset in zip(
+            manager.state_dict["NREM"]["times"][0],
+            manager.state_dict["NREM"]["times"][1],
         ):
-            tmp_trace = trace[onset_idx : offset_idx + 1]
+            tmp_rec = rec.channel_slice(channel_ids=[ch]).time_slice(
+                start_time=onset, end_time=offset
+            )
+            tmp_trace = tmp_rec.get_traces(return_scaled=True).flatten()
             up_cross = np.where((tmp_trace[:-1] < 0) & (tmp_trace[1:] > 0))[0]
             down_cross = np.where((tmp_trace[:-1] > 0) & (tmp_trace[1:] < 0))[
                 0
@@ -81,22 +84,13 @@ def detect_slow_oscs(manager, rec, debug=False, **params):
                     valid_end.append(next_down)
 
             # Final aligned crossings
-            valid_down = np.array(valid_down)
-            valid_up = np.array(valid_up)
-            valid_end = np.array(valid_end)
-            channel_crossings["down_crossing"].extend(
-                # down_cross[:-1] + onset_idx
-                valid_down
-                + onset_idx
-            )
-            channel_crossings["up_crossing"].extend(
-                valid_up + onset_idx
-            )  # up_cross + onset_idx)
-            channel_crossings["end_crossing"].extend(
-                # down_cross[1:] + onset_idx
-                valid_end
-                + onset_idx
-            )
+            tmp_times = tmp_rec.get_times()
+            valid_down_times = tmp_times[np.array(valid_down)]
+            valid_up_times = tmp_times[np.array(valid_up)]
+            valid_end_times = tmp_times[np.array(valid_end)]
+            channel_crossings["down_crossing"].extend(valid_down_times)
+            channel_crossings["up_crossing"].extend(valid_up_times)
+            channel_crossings["end_crossing"].extend(valid_end_times)
             if debug:
                 pad = 0.1
                 rng = np.random.default_rng()
@@ -236,12 +230,8 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
         df_ch = crossings[ch].copy()
 
         # Duration filters
-        df_ch["down_state_dur"] = (
-            df_ch["up_crossing"] - df_ch["down_crossing"]
-        ) / params["Fs"]
-        df_ch["total_dur"] = (
-            df_ch["end_crossing"] - df_ch["down_crossing"]
-        ) / params["Fs"]
+        df_ch["down_state_dur"] = df_ch["up_crossing"] - df_ch["down_crossing"]
+        df_ch["total_dur"] = df_ch["end_crossing"] - df_ch["down_crossing"]
 
         if params.get("slo_dur_max_down", False):
             df_ch = df_ch[
@@ -259,15 +249,15 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
             & (df_ch["total_dur"] >= params["slo_dur_min"])  # * params["Fs"])
         ]
         for idx, row in df_ch.iterrows():
-            start_ind = row["down_crossing"]
-            mid_ind = row["up_crossing"]
-            end_ind = row["end_crossing"]
+            start_time = row["down_crossing"]
+            mid_time = row["up_crossing"]
+            end_time = row["end_crossing"]
 
-            if mid_ind <= start_ind or end_ind <= mid_ind:
+            if mid_time <= start_time or end_time <= mid_time:
                 continue  # Skip invalid intervals
-            tmp_rec = raw_rec.frame_slice(
-                start_frame=start_ind,
-                end_frame=end_ind,
+            tmp_rec = raw_rec.time_slice(
+                start_time=start_time,
+                end_time=end_time,
             )
             trace = tmp_rec.get_traces(
                 channel_ids=[ch],
@@ -275,7 +265,10 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
             ).flatten()
 
             neg_peak_val = np.min(trace)
-            neg_peak_idx = np.argmin(trace) + start_ind
+            neg_peak_idx = np.argmin(trace) + raw_rec.time_to_sample_index(
+                start_time
+            )
+            neg_peak_time = tmp_rec.get_times()[np.argmin(trace)]
             pos_peak_val = np.max(trace)
             peak_to_peak = np.abs(neg_peak_val) + pos_peak_val
             event_metadata.append(
@@ -285,6 +278,7 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
                     **row.to_dict(),
                     "neg_peak_val": neg_peak_val,
                     "neg_peak_idx": neg_peak_idx,
+                    "neg_peak_time": neg_peak_time,
                     "pos_peak_val": pos_peak_val,
                     "peak_to_peak": peak_to_peak,
                 }
@@ -315,19 +309,18 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
         if not row["valid"]:
             continue
         ch = row["channel"]
-        neg_peak_idx = row["neg_peak_idx"]
-        if (neg_peak_idx + sample_window + 1 < raw_rec.get_num_samples()) and (
-            neg_peak_idx - sample_window >= 0
+        neg_peak_time = row["neg_peak_time"]
+        if (neg_peak_time + twindow < raw_rec.get_end_time()) and (
+            neg_peak_time - twindow >= raw_rec.get_start_time()
         ):
-            tmp_rec = raw_rec.frame_slice(
-                start_frame=neg_peak_idx - sample_window,
-                end_frame=neg_peak_idx + sample_window + 1,
+            tmp_rec = raw_rec.time_slice(
+                start_time=neg_peak_time - twindow,
+                end_time=neg_peak_time + twindow,
             )
-            phase_tmp = phase_rec.frame_slice(
-                start_frame=neg_peak_idx - sample_window,
-                end_frame=neg_peak_idx + sample_window + 1,
+            phase_tmp = phase_rec.time_slice(
+                start_time=neg_peak_time - twindow,
+                end_time=neg_peak_time + twindow,
             )
-
             SOGA_waveform = tmp_rec.get_traces(
                 channel_ids=[ch],
                 return_scaled=True,
@@ -340,7 +333,7 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
             processed_rows.append(
                 {
                     **row.to_dict(),
-                    "waveform_onset_idx": neg_peak_idx - sample_window,
+                    "waveform_onset_time": neg_peak_time - twindow,
                     "SOGA_waveform": SOGA_waveform,
                     "SOGAPhase_waveform": SOGAPhase_waveform,
                 }
@@ -366,12 +359,17 @@ def run(manager, **params):
     if params.get("save", False):
         save_path = Path(manager.config.get("output_path"), "SO")
         save_path.mkdir(parents=True, exist_ok=True)
-        proc_so_df.to_csv(
-            Path(save_path, f"so-df_{manager.config.get("config_id")}.csv"),
-            index=False,
-            header=True,
-        )
+        for ch in proc_so_df.index.get_level_values(0).unique():
+            proc_so_df.loc[ch].to_csv(
+                Path(
+                    save_path,
+                    f"so-df_ch-{int(ch):02d}_{manager.config.get("config_id")}.csv",
+                ),
+                index=False,
+                header=True,
+            )
     return {
         "df": proc_so_df,
         "rec_times": filt_rec.get_times(),
+        "filt_rec": filt_rec,
     }

@@ -1,4 +1,4 @@
-## state_spectra.py
+## event_spectra_time.py
 
 import numpy as np
 import pandas as pd
@@ -63,6 +63,7 @@ def get_spans(manager, trigger, valid_spans=None, **params):
         if valid_spans is None:
             raise ValueError("valid_spans must be provided for spindle times.")
         if trigger == "center":
+            # TODO: should find closest time to this time in time vector
             offsets = valid_spans.duration / 2
         if trigger == "onset":
             offsets = np.zeros(len(valid_spans))
@@ -70,18 +71,8 @@ def get_spans(manager, trigger, valid_spans=None, **params):
             offsets = valid_spans.duration
         chunks = [
             (
-                int(
-                    event.start
-                    + offset
-                    # + event.duration / 2
-                    - (params.get("window") * params.get("Fs"))
-                ),
-                int(
-                    event.start
-                    + offset
-                    # + event.duration / 2
-                    + (params.get("window") * params.get("Fs"))
-                ),
+                event.start + offset - params.get("window"),
+                event.start + offset + params.get("window"),
             )
             for (_, event), offset in zip(valid_spans.iterrows(), offsets)
         ]
@@ -98,16 +89,8 @@ def get_spans(manager, trigger, valid_spans=None, **params):
             offsets = valid_spans.end_crossing - valid_spans.down_crossing
         chunks = [
             (
-                int(
-                    event.down_crossing
-                    + offset
-                    - (params.get("window") * params.get("Fs"))
-                ),
-                int(
-                    event.down_crossing
-                    + offset
-                    + (params.get("window") * params.get("Fs"))
-                ),
+                event.down_crossing + offset - params.get("window"),
+                event.down_crossing + offset + params.get("window"),
             )
             for (_, event), offset in zip(valid_spans.iterrows(), offsets)
         ]
@@ -116,31 +99,32 @@ def get_spans(manager, trigger, valid_spans=None, **params):
         state, trigger = trigger.split("-")
         state = state.upper()
         trigger = trigger.lower()
+        trig_dict = {"onset": 0, "offset": 1}
         assert state in ["WAKE", "NREM", "REM"]
         if trigger == "onset":
             good_inds = np.where(
                 (
-                    manager.state_dict[state]["offset"]
-                    - manager.state_dict[state]["onset"]
-                    + (params.get("window_shift", 0) * params.get("Fs"))
+                    manager.state_dict[state]["times"][1]
+                    - manager.state_dict[state]["times"][0]
+                    + params.get("window_shift", 0)
                 )
-                > (params.get("window") * params.get("Fs"))
+                > params.get("window")
             )[0]
         elif trigger == "offset":
             good_inds = np.where(
                 (
                     (
-                        manager.state_dict[state]["onset"][1:]
-                        - manager.state_dict[state]["offset"][:-1]
-                        + (params.get("window_shift", 0) * params.get("Fs"))
+                        manager.state_dict[state]["times"][0][1:]
+                        - manager.state_dict[state]["times"][1][:-1]
+                        + params.get("window_shift", 0)
                     )
-                    > (params.get("window") * params.get("Fs"))
+                    > params.get("window")
                 )
                 & (
-                    manager.state_dict[state]["offset"]
-                    - manager.state_dict[state]["onset"]
-                    + (params.get("window_shift", 0) * params.get("Fs"))
-                    > (params.get("window") * params.get("Fs"))
+                    manager.state_dict[state]["times"][1]
+                    - manager.state_dict[state]["times"][0]
+                    + params.get("window_shift", 0)
+                    > params.get("window")
                 )
             )[0]
         else:
@@ -153,11 +137,10 @@ def get_spans(manager, trigger, valid_spans=None, **params):
         # )[0]
         chunks = [
             [
-                manager.state_dict[state][trigger][i]
-                + params.get("window_shift", 0) * params.get("Fs"),
-                manager.state_dict[state][trigger][i]
-                + (params.get("window_shift", 0) + params.get("window"))
-                * params.get("Fs"),
+                manager.state_dict[state]["times"][trig_dict[trigger]][i]
+                + params.get("window_shift", 0),
+                manager.state_dict[state]["times"][trig_dict[trigger]][i]
+                + (params.get("window_shift", 0) + params.get("window")),
             ]
             for i in good_inds
         ]
@@ -171,9 +154,6 @@ def down_filt_ref_rec(rec, rec_dur, **params):
     if ref_method != "local":
         local_rad = None
     rec = spp.resample(rec, resample_rate=params["Fs"])
-    rec = rec.frame_slice(
-        start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"])
-    )
     if rec.get_num_channels() > 1:
         ref_rec = spp.common_reference(
             rec, reference=ref_method, local_radius=local_rad
@@ -189,6 +169,9 @@ def down_filt_ref_rec(rec, rec_dur, **params):
         valid_times,
         target_fs=params["Fs"],
     )
+    filt_rec = filt_rec.frame_slice(
+        start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"])
+    )
     # filt_rec = spp.bandpass_filter(
     #     ref_rec,
     #     freq_min=filt_edges[0],
@@ -201,7 +184,6 @@ def down_filt_ref_rec(rec, rec_dur, **params):
 def get_spectra(rec, chunks, channels=None, **params):
     avg_spectra = {ch: None for ch in channels}
     time_arr = {ch: [] for ch in channels}
-    times = rec.get_times()
     expectation_type = (
         "time_trials_tapers" if params["PSD"] else "trials_tapers"
     )
@@ -210,9 +192,9 @@ def get_spectra(rec, chunks, channels=None, **params):
             print(f"Processing channel {ch}")
             ch_spectrum = []
             for start, stop in chunks:
-                tmp_rec = rec.frame_slice(
-                    start_frame=start,
-                    end_frame=stop,
+                tmp_rec = rec.time_slice(
+                    start_time=start,
+                    end_time=stop,
                 )
                 tmp_trace = tmp_rec.get_traces(
                     channel_ids=[ch], return_scaled=True
@@ -222,7 +204,7 @@ def get_spectra(rec, chunks, channels=None, **params):
                     sampling_frequency=tmp_rec.get_sampling_frequency(),
                     time_window_duration=params.get("spectra_window"),
                     time_window_step=params.get("spectra_overlap"),
-                    start_time=times[start],
+                    start_time=start,
                 )
                 c = Connectivity(
                     fourier_coefficients=mtm.fft(),
@@ -253,9 +235,9 @@ def run(manager, **params):
         valid_spans = load_SOs(manager, channel=params.get("so_ch"))
     else:
         valid_spans = None
-    if params["region"] == "ctx":
+    if params["region"].lower() == "ctx":
         rec = manager.ctx_rec
-    elif params["region"] == "hyp":
+    elif params["region"].lower() == "hyp":
         rec = manager.hyp_rec
     rec_duration = manager.config["data"].get("rec_duration", None)
     rec, neighbors = down_filt_ref_rec(rec, rec_dur=rec_duration, **params)
@@ -282,7 +264,7 @@ def run(manager, **params):
                 Path(
                     manager.config["output_path"],
                     (
-                        f"spectra_{trigger}_ch-{int(ch):02d}"
+                        f"spectra_{trigger}_ch-{int(ch):02d}_{params.get('region')}"
                         f"_{manager.config.get('config_id')}.npz"
                     ),
                 ),

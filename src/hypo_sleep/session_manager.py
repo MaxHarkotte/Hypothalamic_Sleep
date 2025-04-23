@@ -24,7 +24,9 @@ class Session:
         # load raw hypothalamic data
         hyp_chs = self.config["data"].get("hyp_channels", None)
         probe = self.get_probe(self.config["data"].get("probe_path", None))
-        self.hyp_rec = self.load_rec(channels=hyp_chs, probe=probe, concatenate=True)
+        self.hyp_rec = self.load_rec(
+            channels=hyp_chs, probe=probe, concatenate=True
+        )
         self.scoring = self.load_scoring()
         self.state_dict = make_state_dict(
             self.scoring,
