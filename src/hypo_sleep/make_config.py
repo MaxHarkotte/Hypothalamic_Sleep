@@ -12,12 +12,8 @@ class Config:
     def __init__(self, data_path, save_path, animal_id, date):
         self.animal_id = animal_id
         self.date = date
-        self.load_path = get_path(
-            data_path, animal_id, date, data=True, exists=True
-        )
-        self.save_path = get_path(
-            save_path, animal_id, date, data=False, exists=False
-        )
+        self.load_path = get_path(data_path, animal_id, date, data=True, exists=True)
+        self.save_path = get_path(save_path, animal_id, date, data=False, exists=False)
         print(f"load_path: {self.load_path}\nsave_path: {self.save_path}")
 
     def make_default_config(
@@ -35,6 +31,8 @@ class Config:
             "config_name": name,
             "config_id": self.config_id,
             "created_at": dt.now().strftime("%Y-%m-%d_%H-%M-%S"),
+            "animal_id": self.animal_id,
+            "date": self.date,
             "raw_data_path": self.load_path.as_posix(),
             "output_path": output_path.as_posix(),
             "data": {
@@ -55,139 +53,312 @@ class Config:
             },
             "analysis": [
                 {
-                    "pipeline": "spindle_detection",
+                    "pipeline": "resample_recording",
                     "parameters": {
-                        "channels": rec_info["ctx_channels"],
-                        "Fs": 250,  # Hz
-                        "dur_min": [0.5, 0.25],
-                        "dur_max": [2.5, 2.5],
-                        "thr": [1.5, 2, 2.5],
-                        "thr_chan": [],
-                        "freq": [10, 16],
-                        "peakdist_max": 0.125,
+                        "Fs": 250,
+                        "save": True,
+                        "region": "ctx",
+                    },
+                },
+                {
+                    "pipeline": "resample_recording",
+                    "parameters": {
+                        "Fs": 250,
+                        "save": True,
+                        "region": "hyp",
+                    },
+                },
+                {
+                    "pipeline": "reference_recording",
+                    "parameters": {
+                        "Fs": 250,
+                        "ref_method": "global",
+                        "region": "ctx",
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "reference_recording",
+                    "parameters": {
+                        "Fs": 250,
+                        "ref_method": "local",
+                        "local_radius": (30, 100),
+                        "region": "hyp",
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "filter_recording",
+                    "parameters": {
+                        "Fs": 250,
+                        "ref_method": "global",
+                        "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                        "filter_order": 6,
+                        "region": "ctx",
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "filter_recording",
+                    "parameters": {
+                        "Fs": 250,
+                        "ref_method": "local",
+                        "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                        "filter_order": 6,
+                        "region": "hyp",
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "filter_recording",
+                    "parameters": {
+                        "Fs": 250,
+                        "ref_method": "global",
                         "filter_coeffs": [9, 10, 16, 17],
-                        "filter_order": 6,
-                        "ref_method": "global",
+                        "region": "ctx",
                         "save": True,
-                        "load": False,
                     },
                 },
                 {
-                    "pipeline": "event_spectra",
+                    "pipeline": "filter_recording",
                     "parameters": {
-                        "Fs": 250,  # Hz
-                        "filter_coeffs": [0.1, 0.5, 120, 122],
-                        "filter_order": 6,
-                        "spectra_window": 0.5,  # seconds
-                        "spectra_overlap": 0.1,  # seconds
-                        "window": 4,  # seconds
-                        "trigger": "spi-center",
-                        "window_shift": 0,
-                        "spi_ch": "39",
-                        "spectra_chs": ["1", "31"],
-                        "PSD": False,
-                        "spectrogram": True,
+                        "Fs": 250,
+                        "ref_method": "local",
+                        "filter_coeffs": [9, 10, 16, 17],
                         "region": "hyp",
-                        "ref_method": "global",
-                        "plot": True,
                         "save": True,
                     },
                 },
+                # {
+                #     "pipeline": "spindle_detection",
+                #     "parameters": {
+                #         "channels": rec_info["ctx_channels"],
+                #         "Fs": 250,  # Hz
+                #         "dur_min": [0.5, 0.25],
+                #         "dur_max": [2.5, 2.5],
+                #         "thr": [1.5, 2, 2.5],
+                #         "thr_chan": [],
+                #         "freq": [10, 16],
+                #         "peakdist_max": 0.125,
+                #         "filter_coeffs": [9, 10, 16, 17],
+                #         "filter_order": 6,
+                #         "ref_method": "global",
+                #         "save": True,
+                #         "load": False,
+                #     },
+                # },
+                # {
+                #     "pipeline": "event_spectra",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                #         "filter_order": 6,
+                #         "spectra_window": 0.5,  # seconds
+                #         "spectra_overlap": 0.1,  # seconds
+                #         "window": 4,  # seconds
+                #         "trigger": "spi-center",
+                #         "window_shift": 0,
+                #         "spi_ch": "39",
+                #         "spectra_chs": ["1", "7", "26", "12", "31"],
+                #         "PSD": False,
+                #         "spectrogram": True,
+                #         "region": "hyp",
+                #         "ref_method": "global",
+                #         "plot": True,
+                #         "plot_params": {"norm": True, "plot_method": "avg"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "event_spectra",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                #         "filter_order": 6,
+                #         "spectra_window": 0.5,  # seconds
+                #         "spectra_overlap": 0.1,  # seconds
+                #         "window": 4,  # seconds
+                #         "trigger": "spi-center",
+                #         "window_shift": 0,
+                #         "spi_ch": "39",
+                #         "spectra_chs": ["39", "45"],
+                #         "PSD": False,
+                #         "spectrogram": True,
+                #         "region": "ctx",
+                #         "ref_method": "global",
+                #         "plot": True,
+                #         "plot_params": {"norm": True, "plot_method": "avg"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "event_spectra",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                #         "filter_order": 6,
+                #         "spectra_window": 0.5,  # seconds
+                #         "spectra_overlap": 0.1,  # seconds
+                #         "window": 4,  # seconds
+                #         "trigger": "spi-center",
+                #         "window_shift": 0,
+                #         "spi_ch": "39",
+                #         "spectra_chs": ["1", "7", "26", "12", "31"],
+                #         "PSD": True,
+                #         "spectrogram": False,
+                #         "region": "hyp",
+                #         "ref_method": "global",
+                #         "plot": True,
+                #         "plot_params": {"norm": True, "plot_method": "avg"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "event_spectra",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                #         "filter_order": 6,
+                #         "spectra_window": 10,  # seconds
+                #         "spectra_overlap": 2,  # seconds
+                #         "window": 60,  # seconds
+                #         "trigger": "nrem-onset",
+                #         "window_shift": -30,
+                #         "spectra_chs": ["1", "7", "26", "12", "31"],
+                #         "PSD": False,
+                #         "spectrogram": True,
+                #         "region": "hyp",
+                #         "ref_method": "global",
+                #         "plot": True,
+                #         "plot_params": {"norm": True, "plot_method": "avg"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "event_spectra",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                #         "filter_order": 6,
+                #         "spectra_window": 10,  # seconds
+                #         "spectra_overlap": 2,  # seconds
+                #         "window": 60,  # seconds
+                #         "trigger": "nrem-onset",
+                #         "window_shift": -30,
+                #         "spectra_chs": ["39", "45"],
+                #         "PSD": False,
+                #         "spectrogram": True,
+                #         "region": "ctx",
+                #         "ref_method": "global",
+                #         "plot": True,
+                #         "plot_params": {"norm": True, "plot_method": "avg"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "SO_detection",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [0.01, 0.1, 4, 4.1],
+                #         "filter_order": 3,
+                #         "channels": rec_info["ctx_channels"],
+                #         "slo_dur_min": 0.5,  # seconds
+                #         "slo_dur_max": 2.0,  # seconds
+                #         # "slo_dur_max_down": 0.300,  # seconds
+                #         "slo_rel_thr": 33,
+                #         # "slo_thr": 1.5,  # SDs
+                #         # "slo_peak2peak_min": 0.7,
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "event_spectra",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                #         "filter_order": 6,
+                #         "spectra_window": 1,  # seconds
+                #         "spectra_overlap": 0.8,  # seconds
+                #         "window": 5,  # seconds
+                #         "trigger": "so-peak",
+                #         "window_shift": 0,
+                #         "spectra_chs": ["1", "7", "26", "12", "31"],
+                #         "so_ch": "39",
+                #         "PSD": False,
+                #         "spectrogram": True,
+                #         "region": "hyp",
+                #         "ref_method": "global",
+                #         "plot": True,
+                #         "plot_params": {"norm": True, "plot_method": "avg"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "event_spectra",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
+                #         "filter_order": 6,
+                #         "spectra_window": 1,  # seconds
+                #         "spectra_overlap": 0.8,  # seconds
+                #         "window": 5,  # seconds
+                #         "trigger": "so-peak",
+                #         "window_shift": 0,
+                #         "spectra_chs": ["39", "45"],
+                #         "so_ch": "39",
+                #         "PSD": False,
+                #         "spectrogram": True,
+                #         "region": "ctx",
+                #         "ref_method": "global",
+                #         "plot": True,
+                #         "plot_params": {"norm": True, "plot_method": "avg"},
+                #         "save": True,
+                #     },
+                # },
                 {
-                    "pipeline": "event_spectra",
+                    "pipeline": "infraslow_power",
                     "parameters": {
                         "Fs": 250,  # Hz
-                        "filter_coeffs": [0.1, 0.5, 120, 122],
-                        "filter_order": 6,
-                        "spectra_window": 0.5,  # seconds
-                        "spectra_overlap": 0.1,  # seconds
-                        "window": 4,  # seconds
-                        "trigger": "spi-center",
-                        "window_shift": 0,
-                        "spi_ch": "39",
-                        "spectra_chs": ["1", "31"],
-                        "PSD": True,
-                        "spectrogram": False,
-                        "region": "hyp",
-                        "ref_method": "global",
-                        "plot": True,
-                        "save": True,
-                    },
-                },
-                {
-                    "pipeline": "event_spectra",
-                    "parameters": {
-                        "Fs": 250,  # Hz
-                        "filter_coeffs": [0.1, 0.5, 120, 122],
-                        "filter_order": 6,
-                        "spectra_window": 10,  # seconds
-                        "spectra_overlap": 2,  # seconds
-                        "window": 60,  # seconds
-                        "trigger": "nrem-onset",
-                        "window_shift": 0,
-                        "spectra_chs": ["1", "31"],
-                        "PSD": False,
-                        "spectrogram": True,
-                        "region": "hyp",
-                        "ref_method": "global",
-                        "plot": True,
-                        "save": True,
-                    },
-                },
-                {
-                    "pipeline": "SO_detection",
-                    "parameters": {
-                        "Fs": 250,  # Hz
-                        "filter_coeffs": [0.01, 0.1, 4, 4.5],
-                        "filter_order": 3,
+                        "filter_coeffs": [9, 10, 16, 17],
+                        "filter_env_coeffs": [0.0005, 0.001, 0.1, 0.1005],
+                        "filter_order": 10,
                         "channels": rec_info["ctx_channels"],
-                        "slo_dur_min": 0.5,  # seconds
-                        "slo_dur_max": 2.0,  # seconds
-                        # "slo_dur_max_down": 0.300,  # seconds
-                        "slo_rel_thr": 33,
-                        # "slo_thr": 1.5,  # SDs
-                        # "slo_peak2peak_min": 0.7,
-                        "save": True,
-                    },
-                },
-                {
-                    "pipeline": "event_spectra",
-                    "parameters": {
-                        "Fs": 250,  # Hz
-                        "filter_coeffs": [0.1, 0.5, 120, 122],
-                        "filter_order": 6,
-                        "spectra_window": 0.5,  # seconds
-                        "spectra_overlap": 0.1,  # seconds
-                        "window": 5,  # seconds
-                        "trigger": "so-peak",
-                        "window_shift": 0,
-                        "spectra_chs": ["1", "31"],
-                        "PSD": False,
-                        "spectrogram": True,
-                        "region": "hyp",
-                        "ref_method": "global",
-                        "plot": True,
-                        "save": True,
-                    },
-                },
-                {
-                    "pipeline": "event_spectra",
-                    "parameters": {
-                        "Fs": 250,  # Hz
-                        "filter_coeffs": [0.1, 0.5, 120, 122],
-                        "filter_order": 6,
-                        "spectra_window": 0.5,  # seconds
-                        "spectra_overlap": 0.1,  # seconds
-                        "window": 5,  # seconds
-                        "trigger": "so-peak",
-                        "window_shift": 0,
-                        "spectra_chs": ["1", "31"],
-                        "PSD": False,
-                        "spectrogram": True,
+                        "state": "NREM",
                         "region": "ctx",
                         "ref_method": "global",
-                        "plot": True,
                         "save": True,
+                        "plot": True,
+                        "plot_params": {
+                            "plot_types": [
+                                "spans",
+                                "psd",
+                                "acorr",
+                                "acorr_psd",
+                            ],
+                        },
+                    },
+                },
+                {
+                    "pipeline": "infraslow_power",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_coeffs": [9, 10, 16, 17],
+                        "filter_env_coeffs": [0.0005, 0.001, 0.1, 0.1005],
+                        "filter_order": 10,
+                        "channels": rec_info["hyp_channels"],  # ["7", "13", "26"],
+                        "state": "NREM",
+                        "region": "hyp",
+                        "ref_method": "global",
+                        "save": True,
+                        "plot": True,
+                        "plot_params": {
+                            "plot_types": [
+                                "spans",
+                                "psd",
+                                "acorr",
+                                "acorr_psd",
+                            ],
+                        },
                     },
                 },
             ],
@@ -246,9 +417,7 @@ class Config:
         path = self.save_path if path is None else path
         probe_path = list(Path(path.parent).glob(f"*{animal}*.json"))
         if len(probe_path) == 0:
-            raise FileNotFoundError(
-                f"No probe file found for animal {animal}."
-            )
+            raise FileNotFoundError(f"No probe file found for animal {animal}.")
         if len(probe_path) > 1:
             raise ValueError(f"Multiple probes found for animal {animal}.")
         return probe_path[0]
@@ -260,9 +429,7 @@ class Config:
         """
         path = self.save_path if path is None else path
         files = list(
-            Path(path, "metadata").glob(
-                f"*{self.animal_id}_{self.date}_metadata.json"
-            )
+            Path(path, "metadata").glob(f"*{self.animal_id}_{self.date}_metadata.json")
         )
         if len(files) == 0:
             raise FileNotFoundError(f"No json file found in {path}")

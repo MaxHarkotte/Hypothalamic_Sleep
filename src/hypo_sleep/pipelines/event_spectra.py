@@ -6,7 +6,7 @@ from pathlib import Path
 from spectral_connectivity import Connectivity, Multitaper
 import spikeinterface as si
 import spikeinterface.preprocessing as spp
-from ..rec_utils import get_filter_coeff, filter_data, get_valid_times
+from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
 
 
 def load_spindles(manager, channel):
@@ -17,13 +17,9 @@ def load_spindles(manager, channel):
         )
     )
     if len(spindle_files) == 0:
-        raise FileNotFoundError(
-            f"No spindle files found for channel {channel}."
-        )
+        raise FileNotFoundError(f"No spindle files found for channel {channel}.")
     if len(spindle_files) > 1:
-        raise ValueError(
-            f"Multiple spindle files found for channel {channel}."
-        )
+        raise ValueError(f"Multiple spindle files found for channel {channel}.")
     valid_spans = pd.read_csv(spindle_files[0])
     return valid_spans
 
@@ -171,9 +167,7 @@ def down_filt_ref_rec(rec, rec_dur, **params):
     if ref_method != "local":
         local_rad = None
     rec = spp.resample(rec, resample_rate=params["Fs"])
-    rec = rec.frame_slice(
-        start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"])
-    )
+    rec = rec.frame_slice(start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"]))
     if rec.get_num_channels() > 1:
         ref_rec = spp.common_reference(
             rec, reference=ref_method, local_radius=local_rad
@@ -183,7 +177,7 @@ def down_filt_ref_rec(rec, rec_dur, **params):
         ref_rec = rec
     valid_times = get_valid_times(ref_rec)
     filter_coeffs = get_filter_coeff(params["Fs"], params["filter_coeffs"])
-    filt_rec = filter_data(
+    filt_rec = filter_recording(
         ref_rec,
         filter_coeffs,
         valid_times,
@@ -202,9 +196,7 @@ def get_spectra(rec, chunks, channels=None, **params):
     avg_spectra = {ch: None for ch in channels}
     time_arr = {ch: [] for ch in channels}
     times = rec.get_times()
-    expectation_type = (
-        "time_trials_tapers" if params["PSD"] else "trials_tapers"
-    )
+    expectation_type = "time_trials_tapers" if params["PSD"] else "trials_tapers"
     for ch in rec.get_channel_ids():
         if str(ch) in channels:
             print(f"Processing channel {ch}")
@@ -214,9 +206,7 @@ def get_spectra(rec, chunks, channels=None, **params):
                     start_frame=start,
                     end_frame=stop,
                 )
-                tmp_trace = tmp_rec.get_traces(
-                    channel_ids=[ch], return_scaled=True
-                )
+                tmp_trace = tmp_rec.get_traces(channel_ids=[ch], return_scaled=True)
                 mtm = Multitaper(
                     tmp_trace,
                     sampling_frequency=tmp_rec.get_sampling_frequency(),

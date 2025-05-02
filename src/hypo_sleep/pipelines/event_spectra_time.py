@@ -6,7 +6,12 @@ from pathlib import Path
 from spectral_connectivity import Connectivity, Multitaper
 import spikeinterface as si
 import spikeinterface.preprocessing as spp
-from ..rec_utils import get_filter_coeff, filter_data, get_valid_times
+from ..rec_utils import (
+    get_filter_coeff,
+    filter_recording,
+    get_valid_times,
+    resample_recording,
+)
 
 
 def load_spindles(manager, channel):
@@ -17,13 +22,9 @@ def load_spindles(manager, channel):
         )
     )
     if len(spindle_files) == 0:
-        raise FileNotFoundError(
-            f"No spindle files found for channel {channel}."
-        )
+        raise FileNotFoundError(f"No spindle files found for channel {channel}.")
     if len(spindle_files) > 1:
-        raise ValueError(
-            f"Multiple spindle files found for channel {channel}."
-        )
+        raise ValueError(f"Multiple spindle files found for channel {channel}.")
     valid_spans = pd.read_csv(spindle_files[0])
     return valid_spans
 
@@ -72,7 +73,10 @@ def get_spans(manager, trigger, valid_spans=None, **params):
         chunks = [
             (
                 event.start + offset - params.get("window"),
-                event.start + offset + params.get("window"),
+                event.start
+                + offset
+                + params.get("window")
+                + params.get("spectra_window", 0),
             )
             for (_, event), offset in zip(valid_spans.iterrows(), offsets)
         ]
@@ -90,7 +94,10 @@ def get_spans(manager, trigger, valid_spans=None, **params):
         chunks = [
             (
                 event.down_crossing + offset - params.get("window"),
-                event.down_crossing + offset + params.get("window"),
+                event.down_crossing
+                + offset
+                + params.get("window")
+                + params.get("spectra_window", 0),
             )
             for (_, event), offset in zip(valid_spans.iterrows(), offsets)
         ]
@@ -107,6 +114,7 @@ def get_spans(manager, trigger, valid_spans=None, **params):
                     manager.state_dict[state]["times"][1]
                     - manager.state_dict[state]["times"][0]
                     + params.get("window_shift", 0)
+                    + params.get("spectra_window", 0)
                 )
                 > params.get("window")
             )[0]
@@ -124,6 +132,7 @@ def get_spans(manager, trigger, valid_spans=None, **params):
                     manager.state_dict[state]["times"][1]
                     - manager.state_dict[state]["times"][0]
                     + params.get("window_shift", 0)
+                    + params.get("spectra_window", 0)
                     > params.get("window")
                 )
             )[0]
@@ -138,22 +147,28 @@ def get_spans(manager, trigger, valid_spans=None, **params):
         chunks = [
             [
                 manager.state_dict[state]["times"][trig_dict[trigger]][i]
-                + params.get("window_shift", 0),
+                + params.get("window_shift", 0)
+                - params.get("window"),
                 manager.state_dict[state]["times"][trig_dict[trigger]][i]
-                + (params.get("window_shift", 0) + params.get("window")),
+                + (
+                    params.get("window_shift", 0)
+                    + params.get("window")
+                    + params.get("spectra_window", 0)
+                ),
             ]
             for i in good_inds
         ]
     return chunks
 
 
-def down_filt_ref_rec(rec, rec_dur, **params):
+def down_filt_ref_rec(manager, rec, rec_dur, **params):
     # filt_edges = params.get("filter_edges")
     ref_method = params.get("ref_method", None)
     neighbors = []
     if ref_method != "local":
         local_rad = None
-    rec = spp.resample(rec, resample_rate=params["Fs"])
+    rec = resample_recording(manager, rec, resample_rate=params["Fs"], **params)
+
     if rec.get_num_channels() > 1:
         ref_rec = spp.common_reference(
             rec, reference=ref_method, local_radius=local_rad
@@ -163,11 +178,13 @@ def down_filt_ref_rec(rec, rec_dur, **params):
         ref_rec = rec
     valid_times = get_valid_times(ref_rec)
     filter_coeffs = get_filter_coeff(params["Fs"], params["filter_coeffs"])
-    filt_rec = filter_data(
-        ref_rec,
-        filter_coeffs,
-        valid_times,
+    filt_rec = filter_recording(
+        manager,
+        recording=ref_rec,
+        filter_coeff=filter_coeffs,
+        valid_times=valid_times,
         target_fs=params["Fs"],
+        **params,
     )
     filt_rec = filt_rec.frame_slice(
         start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"])
@@ -184,9 +201,7 @@ def down_filt_ref_rec(rec, rec_dur, **params):
 def get_spectra(rec, chunks, channels=None, **params):
     avg_spectra = {ch: None for ch in channels}
     time_arr = {ch: [] for ch in channels}
-    expectation_type = (
-        "time_trials_tapers" if params["PSD"] else "trials_tapers"
-    )
+    expectation_type = "time_trials_tapers" if params["PSD"] else "trials_tapers"
     for ch in rec.get_channel_ids():
         if str(ch) in channels:
             print(f"Processing channel {ch}")
@@ -196,9 +211,7 @@ def get_spectra(rec, chunks, channels=None, **params):
                     start_time=start,
                     end_time=stop,
                 )
-                tmp_trace = tmp_rec.get_traces(
-                    channel_ids=[ch], return_scaled=True
-                )
+                tmp_trace = tmp_rec.get_traces(channel_ids=[ch], return_scaled=True)
                 mtm = Multitaper(
                     tmp_trace,
                     sampling_frequency=tmp_rec.get_sampling_frequency(),
@@ -214,15 +227,21 @@ def get_spectra(rec, chunks, channels=None, **params):
                     blocks=1,
                 )
                 time_arr[ch].append(c.time)
-                if params["PSD"]:
-                    ch_spectrum.append(c.power())
-                else:
-                    ch_spectrum.append(c.power().squeeze())
+                ch_spectrum.append(c.power().squeeze())
         else:
             continue
         try:
+            min_len = min(len(spec) for spec in ch_spectrum)
+            ch_spectrum = [
+                spec[:min_len] for spec in ch_spectrum
+            ]  # Truncate to the minimum length
+            time_arr[ch] = np.asarray([tmp_time[:min_len] for tmp_time in time_arr[ch]])
             avg_spectra[ch] = np.stack(ch_spectrum, axis=0)
         except ValueError as e:
+            print(f"Error stacking spectra for channel {ch}: {e}")
+            import pdb
+
+            pdb.set_trace()
             avg_spectra[ch] = ch_spectrum
     return avg_spectra, time_arr, c.frequencies
 
@@ -240,7 +259,7 @@ def run(manager, **params):
     elif params["region"].lower() == "hyp":
         rec = manager.hyp_rec
     rec_duration = manager.config["data"].get("rec_duration", None)
-    rec, neighbors = down_filt_ref_rec(rec, rec_dur=rec_duration, **params)
+    rec, neighbors = down_filt_ref_rec(manager, rec, rec_dur=rec_duration, **params)
     chunks = get_spans(manager, trigger, valid_spans=valid_spans, **params)
     if len(chunks) == 0:
         raise ValueError(f"No chunks found for trigger {trigger}.")

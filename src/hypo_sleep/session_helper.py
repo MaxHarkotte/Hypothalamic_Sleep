@@ -10,6 +10,7 @@ source_to_func = {
     "open-ephys": si.read_openephys,
 }
 
+
 def make_state_dict(scoring, config, n_samples, timestamps):
     NREM_mask = np.where(
         np.logical_or.reduce(
@@ -49,19 +50,29 @@ def make_state_dict(scoring, config, n_samples, timestamps):
             "offset": None,
         },
     }
-    for (key, val), mask in zip(state_dict.items(), [NREM_mask, REM_mask, WAKE_mask]):
+    for (key, val), mask in zip(
+        state_dict.items(), [NREM_mask, REM_mask, WAKE_mask]
+    ):
         val["mask"] = np.repeat(mask, int(10 * config.get("scoring_Fs")))[
             :n_samples
         ].astype(int)
-        val["onset"] = np.where(np.diff(val["mask"]) > 0)[0] + 1 * config.get("scoring_Fs")
+        val["onset"] = np.where(np.diff(val["mask"]) > 0)[0] + 1 * config.get(
+            "scoring_Fs"
+        )
         val["offset"] = np.where(np.diff(val["mask"]) < 0)[0]
         val["mask"] = val["mask"].astype(bool)
     if scoring[0] in config.get("code_NREM"):
-        state_dict["NREM"]["onset"] = np.concatenate(([0], state_dict["NREM"]["onset"]))
+        state_dict["NREM"]["onset"] = np.concatenate(
+            ([0], state_dict["NREM"]["onset"])
+        )
     if scoring[0] in config.get("code_REM"):
-        state_dict["REM"]["onset"] = np.concatenate(([0], state_dict["REM"]["onset"]))
+        state_dict["REM"]["onset"] = np.concatenate(
+            ([0], state_dict["REM"]["onset"])
+        )
     if scoring[0] in config.get("code_WAKE"):
-        state_dict["WAKE"]["onset"] = np.concatenate(([0], state_dict["WAKE"]["onset"]))
+        state_dict["WAKE"]["onset"] = np.concatenate(
+            ([0], state_dict["WAKE"]["onset"])
+        )
     if scoring[-1] in config.get("code_NREM"):
         state_dict["NREM"]["offset"] = np.concatenate(
             (state_dict["NREM"]["offset"], [n_samples - 1])
@@ -82,6 +93,7 @@ def make_state_dict(scoring, config, n_samples, timestamps):
             )
         )
     return state_dict
+
 
 class NumpyEncoder(json.JSONEncoder):
     """Special json encoder for numpy types"""

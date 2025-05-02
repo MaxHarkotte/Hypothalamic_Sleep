@@ -1,8 +1,21 @@
+import time
 import numpy as np
 import json
 from pathlib import Path
+import gc
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from hypo_sleep.session_manager import Session
-from hypo_sleep.pipelines import spindle_detection
+from hypo_sleep.pipelines import (
+    spindle_detection,
+    infraslow_power,
+    plot_event_spectra,
+    plot_infraslow_power,
+)
+from hypo_sleep.rec_utils import (
+    resample_recording,
+    reference_recording,
+    filter_recording,
+)
 from hypo_sleep.pipelines import so_detection_time as so_detection
 from hypo_sleep.pipelines import event_spectra_time as event_spectra
 from hypo_sleep.session_helper import NumpyEncoder
@@ -20,19 +33,35 @@ class PipelineManager(Session):
         )
 
     def add_pipeline(self, pipeline_name, **params):
-        pipeline = eval(pipeline_name)
+        pipeline = eval(pipeline_name.lower())
         print(f"Running pipeline {pipeline_name}")
-        result = pipeline.run(self, **params)
-        return result
+        if hasattr(pipeline, "run"):
+            result = pipeline.run(self, **params)
+        else:
+            result = None
+            pipeline(self, **params)
+        if params.get("plot", False):
+            plot_func = eval(f"plot_{pipeline_name.lower()}")
+            plot_func.run(self, **params)
+        if self.config.get("save", False):
+            return result
+        else:
+            return None
 
     def run(self):
+        start = time.time()
         self.pipelines = self.config.get("analysis", None)
         if self.pipelines is None or len(self.pipelines) == 0:
             raise ValueError(f"No pipelines found in {self.config}.")
         results = {}
         for pipeline in self.pipelines:
+            pip_time = time.time()
             name, params = pipeline["pipeline"], pipeline["parameters"]
             results[name] = self.add_pipeline(name, **params)
+            gc.collect()
+            print(f"Pipeline {name} run time: {time.time() - pip_time:.2f} seconds")
+        end = time.time()
+        print(f"Total run time: {end - start:.2f} seconds")
         return results
 
     def save(self):
@@ -46,14 +75,67 @@ class PipelineManager(Session):
             json.dump(f, cls=NumpyEncoder)
 
 
-def main():
-    save = False
-    pipeline = PipelineManager(
-        path="/home/born-animal/Desktop/processed_data/",
-        animal_id="HYDO03",
-        date="2025-02-18_09-19-26",
-        config_id="6e8f",
+def create_parser():
+    parser = ArgumentParser(
+        description="Detect Sleep Spindle events in EEG recordings and map to Local LFP.",
+        usage="%(prog)s [options]",
+        formatter_class=ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument(
+        "--path",
+        "-p",
+        default="/home/born-animal/Desktop/processed_data/",
+        type=str,
+        help="Path to processed data (e.g. /home/born-animal/Desktop/processed_data/)",
+    )
+    parser.add_argument(
+        "--animal",
+        "-a",
+        type=str,
+        help="animal ID (e.g. HYDO01)",
+    )
+    parser.add_argument(
+        "--date",
+        "-d",
+        type=str,
+        help="recording date (e.g. 2024-07-24_05-57-05)",
+    )
+    parser.add_argument(
+        "--config_id",
+        "-c",
+        type=str,
+        help="config ID (e.g. 0a2b)",
+    )
+    parser.add_argument(
+        "--save",
+        "-s",
+        default="False",
+        type=str,
+        help="save all results to json file, default False",
+    )
+    return parser
+
+
+def main():
+    parser = create_parser()
+    args = parser.parse_args()
+    save = eval(args.save)
+    if args.path is None:
+        raise ValueError("Please provide a path to the processed data.")
+    elif Path(args.path).exists() is False:
+        raise ValueError(f"Path {args.path} does not exist.")
+    path = Path(args.path)
+    animal_id = args.animal
+    date = args.date
+    if not Path(path, animal_id, date).exists():
+        raise ValueError(f"{Path(path, animal_id, date).as_posix()} does not exist")
+    pipeline = PipelineManager(
+        path=path.as_posix(),
+        animal_id=animal_id,
+        date=date,
+        config_id=args.config_id,
+    )
+    # "cfc3"
 
     results = pipeline.run()
     if save:

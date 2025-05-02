@@ -6,4 +6,8 @@ from .pipelines import (
     so_detection,
     event_spectra,
     so_detection_time,
+    infraslow_power,
+    event_spectra_time,
+    plot_infraslow_power,
+    plot_event_spectra,
 )

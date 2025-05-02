@@ -4,6 +4,7 @@ import numpy as np
 import psutil
 from scipy import signal
 import spikeinterface as si
+import spikeinterface.preprocessing as spp
 import spikeinterface.extractors as se
 import probeinterface as pi
 import ghostipy as gsp
@@ -48,13 +49,8 @@ def load_rec(
         if channels == "all":
             recording = recording
         elif isinstance(channels, List):
-            if any(
-                channel not in recording.get_channel_ids()
-                for channel in channels
-            ):
-                raise ValueError(
-                    f">= 1 channel of {channels} not found in recording."
-                )
+            if any(channel not in recording.get_channel_ids() for channel in channels):
+                raise ValueError(f">= 1 channel of {channels} not found in recording.")
             recording = recording.channel_slice(channel_ids=channels)
     return recording
 
@@ -92,26 +88,6 @@ def get_valid_times(recording, atol=1e-6):
     return valid_times
 
 
-def reference_recording(
-    recording, reference=Literal["global", "single"], ref_channel_id=None
-):
-    if reference == "global":
-        recording = si.preprocessing.common_reference(
-            recording,
-            reference=reference,
-            operator="median",
-            dtype=np.float64,
-        )
-    elif reference == "single":
-        recording = si.preprocessing.common_reference(
-            recording,
-            reference=reference,
-            ref_channel_ids=ref_channel_id,
-            dtype=np.float64,
-        )
-    return recording
-
-
 def get_filter_coeff(target_fs, band_edges):
     transition_width = (
         (band_edges[1] - band_edges[0]) + (band_edges[3] - band_edges[2])
@@ -120,9 +96,7 @@ def get_filter_coeff(target_fs, band_edges):
     desired = [0, 1, 1, 0]
     TRANS_SPLINE = 2
     filter_coeff = np.array(
-        gsp.firdesign(
-            numtaps, band_edges, desired, fs=target_fs, p=TRANS_SPLINE
-        ),
+        gsp.firdesign(numtaps, band_edges, desired, fs=target_fs, p=TRANS_SPLINE),
         ndmin=1,
     )
     return filter_coeff
@@ -138,16 +112,48 @@ def time_bound_check(start, stop, timestamps, n_samples):
     return frm, to
 
 
-def filter_data(
-    recording,
-    filter_coeff,
-    valid_times,
+def filter_recording(
+    manager,
+    recording=None,
+    filter_coeff=None,
+    valid_times=None,
     target_fs=None,
     decimation: int = None,
     channels=None,
-    verbose=True,
+    verbose=False,
+    **params,
 ):
-
+    if target_fs is None:
+        target_fs = params["Fs"]
+    region = params.get("region")
+    file_append = f'{"-".join([str(i) for i in params["filter_coeffs"]]).replace(".", "_")}_{int(target_fs)}'
+    rec = load_rec_from_disk(manager, rec_type=f"filtered_{file_append}", region=region)
+    if rec is not None:
+        print("Filtered recording already exists. Loading...")
+        if channels is not None:
+            tmp_chs = rec.get_channel_ids()
+            if any(ch not in tmp_chs for ch in channels):
+                raise ValueError(
+                    f"Filtered recording does not contain all channels {channels}."
+                )
+        return rec
+    else:
+        print("Filtered recording does not exist. Filtering...")
+    if recording is None:
+        if params.get("ref_method") is not None:
+            recording = load_rec_from_disk(
+                manager,
+                rec_type=f"ref_{params["ref_method"]}_{params['Fs']}",
+                region=region,
+            )
+        else:
+            recording = load_rec_from_disk(
+                manager, rec_type=f"resampled_{params['Fs']}", region=region
+            )
+    if valid_times is None:
+        valid_times = get_valid_times(recording)
+    if filter_coeff is None:
+        filter_coeff = get_filter_coeff(target_fs, params["filter_coeffs"])
     if channels is None:
         channels = recording.get_channel_ids()
     if decimation is None:
@@ -158,21 +164,19 @@ def filter_data(
     ram_capacity = psutil.virtual_memory().available / (1024**3) * 0.9
     rec_disk_mem = recording.get_memory_size() / (1024**3)
     if len(channels) > 2:
-        data_on_disk = np.zeros(
-            (len(channels), n_samples), dtype=recording.get_dtype()
-        )
+        data_on_disk = np.zeros((n_samples, len(channels)), dtype=recording.get_dtype())
         if verbose:
             for i, ch in tqdm(
                 enumerate(channels),
                 desc="Loading channels",
                 total=len(channels),
             ):
-                data_on_disk[i, :] = recording.get_traces(
+                data_on_disk[:, i] = recording.get_traces(
                     channel_ids=[ch],
                 ).flatten()
         else:
             for i, ch in enumerate(channels):
-                data_on_disk[i, :] = recording.get_traces(
+                data_on_disk[:, i] = recording.get_traces(
                     channel_ids=[ch],
                 ).flatten()
     else:
@@ -207,9 +211,7 @@ def filter_data(
             )
             output_offsets.append(output_offsets[-1] + shape[0])
             output_shape_list[0] += shape[0]
-        filtered_data = np.empty(
-            tuple(output_shape_list), dtype=data_on_disk.dtype
-        )
+        filtered_data = np.empty(tuple(output_shape_list), dtype=data_on_disk.dtype)
         new_timestamps = np.empty((output_shape_list[0],), timestamps.dtype)
         indices = np.array(indices, ndmin=2)
         ts_offset = 0
@@ -217,9 +219,7 @@ def filter_data(
             if verbose:
                 print("filtering in memory")
             extracted_ts = timestamps[start:stop:decimation]
-            new_timestamps[ts_offset : ts_offset + len(extracted_ts)] = (
-                extracted_ts
-            )
+            new_timestamps[ts_offset : ts_offset + len(extracted_ts)] = extracted_ts
             ts_offset += len(extracted_ts)
             gsp.filter_data_fir(
                 data_on_disk,
@@ -240,8 +240,133 @@ def filter_data(
         sampling_frequency=target_fs,
         channel_ids=channels,
     )
-    filtered_rec.is_filtered = True
+    # filtered_rec._annotations.update({"is_filtered": True})
     filtered_rec.set_times(new_timestamps)
     filtered_rec.set_channel_offsets(recording.get_channel_offsets())
     filtered_rec.set_channel_gains(recording.get_channel_gains())
+    if recording.has_probe():
+        filtered_rec.set_probe(recording.get_probe(), in_place=True)
+    save_rec(manager, filtered_rec, rec_type=f"filtered_{file_append}", region=region)
     return filtered_rec
+
+
+def resample_recording(manager, recording=None, resample_rate=250, **params):
+    # try to load existing resampled recording
+    rec = load_rec_from_disk(
+        manager,
+        rec_type=f"resampled_{int(resample_rate)}",
+        region=params["region"],
+    )
+    if rec is not None:
+        print("Filtered recording already exists. Loading...")
+        return rec
+    # if recording is None, load the raw recording
+    if recording is None:
+        recording = getattr(manager, f"{params['region']}_rec")
+    if len(recording.get_channel_ids()) <= 2:
+        try:
+            rec = spp.resample(recording, resample_rate=resample_rate)
+            times = rec.get_times()
+            traces = rec.get_traces()
+        except np.core._exceptions._ArrayMemoryError as e:
+            print(
+                f"Resampling failed due to memory error: {e}. "
+                "Consider using a smaller resample rate or increasing your system's memory."
+            )
+    else:
+        ch_rec = recording.channel_slice(channel_ids=[recording.get_channel_ids()[0]])
+        tmp_rec = spp.resample(ch_rec, resample_rate=resample_rate)
+        traces = np.zeros(
+            (tmp_rec.get_num_samples(), recording.get_num_channels()),
+            dtype=recording.get_dtype(),
+        )
+        for i, ch in tqdm(enumerate(recording.get_channel_ids()), desc="Resampling"):
+            ch_rec = recording.channel_slice(channel_ids=[ch])
+            tmp_rec = spp.resample(ch_rec, resample_rate=resample_rate)
+            traces[:, i] = tmp_rec.get_traces().flatten()
+            if i == 0:
+                times = tmp_rec.get_times()
+    rec = si.NumpyRecording(
+        traces,
+        sampling_frequency=resample_rate,
+        channel_ids=recording.get_channel_ids(),
+    )
+    rec.set_times(times)
+    rec.set_channel_offsets(recording.get_channel_offsets())
+    rec.set_channel_gains(recording.get_channel_gains())
+    if recording.has_probe():
+        rec.set_probe(recording.get_probe(), in_place=True)
+    save_rec(
+        manager,
+        rec,
+        rec_type=f"resampled_{int(resample_rate)}",
+        region=params["region"],
+    )
+    return rec
+
+
+def reference_recording(manager, **params):
+    recording = load_rec_from_disk(
+        manager,
+        region=params["region"],
+        rec_type=f"ref_{params['ref_method']}_{params['Fs']}",
+    )
+    if recording is not None:
+        return recording
+    raw_rec = load_rec_from_disk(
+        manager, region=params["region"], rec_type=f"resampled_{params['Fs']}"
+    )
+    if params["ref_method"] == "global":
+        recording = si.preprocessing.common_reference(
+            raw_rec,
+            operator="median",
+            dtype=np.float64,
+        )
+    elif params["ref_method"] == "single":
+        recording = si.preprocessing.common_reference(
+            raw_rec,
+            reference=params["ref_method"],
+            ref_channel_ids=params["ref_elec"],
+            dtype=np.float64,
+        )
+    elif params["ref_method"] == "local":
+        recording = si.preprocessing.common_reference(
+            raw_rec,
+            reference="local",
+            local_radius=params["local_radius"],
+            dtype=np.float64,
+        )
+    print("sending to save_rec")
+    save_rec(
+        manager=manager,
+        recording=recording,
+        rec_type=f"ref_{params['ref_method']}_{params['Fs']}",
+        region=params["region"],
+    )
+    return recording
+
+
+def save_rec(
+    manager,
+    recording,
+    rec_type,
+    region,
+    job_kwargs={"n_jobs": 24, "chunk_duration": "1s", "progress_bar": True},
+):
+    save_folder = Path(manager.config.get("output_path"), "rec", region, rec_type)
+    if not save_folder.parent.parent.exists():
+        save_folder.parent.parent.mkdir(exist_ok=True)
+    if not save_folder.parent.exists():
+        save_folder.parent.mkdir(exist_ok=True)
+    print(f"saving recording to: \n{save_folder.as_posix()}")
+    recording.save(folder=save_folder, format="binary", **job_kwargs)
+
+
+def load_rec_from_disk(manager, rec_type, region):
+    rec_path = Path(manager.config.get("output_path"), "rec", region, rec_type)
+    if not rec_path.exists():
+        print(f"Recording path {rec_path} does not exist.")
+        return None
+    print(f"loading recording from disk.. {rec_path}")
+    recording = si.load(rec_path)
+    return recording
