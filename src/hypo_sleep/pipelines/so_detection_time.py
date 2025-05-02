@@ -6,21 +6,21 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple
 from pathlib import Path
 import spikeinterface.preprocessing as spp
-from ..rec_utils import get_filter_coeff, filter_data, get_valid_times
+from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
 
 
-def down_filt_rec(rec, rec_dur, **params):
+def down_filt_rec(manager, rec, rec_dur, **params):
     rec = spp.resample(rec, resample_rate=params["Fs"])
-    rec = rec.frame_slice(
-        start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"])
-    )
+    rec = rec.frame_slice(start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"]))
     valid_times = get_valid_times(rec)
     filter_coeffs = get_filter_coeff(params["Fs"], params["filter_coeffs"])
-    filt_rec = filter_data(
-        rec,
-        filter_coeffs,
-        valid_times,
+    filt_rec = filter_recording(
+        manager,
+        recording=rec,
+        filter_coeff=filter_coeffs,
+        valid_times=valid_times,
         target_fs=params["Fs"],
+        **params,
     )
     # filt_rec = spp.bandpass_filter(
     #     rec,
@@ -60,9 +60,7 @@ def detect_slow_oscs(manager, rec, debug=False, **params):
             )
             tmp_trace = tmp_rec.get_traces(return_scaled=True).flatten()
             up_cross = np.where((tmp_trace[:-1] < 0) & (tmp_trace[1:] > 0))[0]
-            down_cross = np.where((tmp_trace[:-1] > 0) & (tmp_trace[1:] < 0))[
-                0
-            ]
+            down_cross = np.where((tmp_trace[:-1] > 0) & (tmp_trace[1:] < 0))[0]
             if up_cross.size == 0 or down_cross.size == 0:
                 continue  # Skip this segment
 
@@ -75,9 +73,7 @@ def detect_slow_oscs(manager, rec, debug=False, **params):
 
             for curr_down, next_down in zip(down_cross[:-1], down_cross[1:]):
                 # Find the first up_cross between curr and next down
-                ups_between = up_cross[
-                    (up_cross > curr_down) & (up_cross < next_down)
-                ]
+                ups_between = up_cross[(up_cross > curr_down) & (up_cross < next_down)]
                 if len(ups_between) > 0:
                     valid_down.append(curr_down)
                     valid_up.append(ups_between[0])
@@ -162,16 +158,10 @@ def plot_crossings(manager, rec, crossings, n_samples=10, pad=0.1, **params):
             replace=False,
         )
         ncols = 2
-        fig, axs = plt.subplots(
-            figsize=(30, 20), ncols=ncols, nrows=n_samples // ncols
-        )
+        fig, axs = plt.subplots(figsize=(30, 20), ncols=ncols, nrows=n_samples // ncols)
         for event_ind, ax in zip(random_indices, axs.ravel()):
-            start_ind = df_ch.iloc[event_ind]["down_crossing"] - int(
-                pad * params["Fs"]
-            )
-            end_ind = df_ch.iloc[event_ind]["end_crossing"] + int(
-                pad * params["Fs"]
-            )
+            start_ind = df_ch.iloc[event_ind]["down_crossing"] - int(pad * params["Fs"])
+            end_ind = df_ch.iloc[event_ind]["end_crossing"] + int(pad * params["Fs"])
             ax.plot(
                 np.arange(start_ind, end_ind),
                 ch_rec[start_ind:end_ind],
@@ -200,9 +190,7 @@ def plot_crossings(manager, rec, crossings, n_samples=10, pad=0.1, **params):
                 linestyles="--",
                 lw=2,
             )
-            ax.hlines(
-                y=0, xmin=start_ind, xmax=end_ind, colors="black", ls="-."
-            )
+            ax.hlines(y=0, xmin=start_ind, xmax=end_ind, colors="black", ls="-.")
             ax.set_xlim([start_ind, end_ind])
             ax.set_ylim([-300, 200])
             ax.set_title(f"Channel {ch} - Event {event_ind}")
@@ -235,13 +223,11 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
 
         if params.get("slo_dur_max_down", False):
             df_ch = df_ch[
-                df_ch["down_state_dur"]
-                <= params["slo_dur_max_down"]  # * params["Fs"]
+                df_ch["down_state_dur"] <= params["slo_dur_max_down"]  # * params["Fs"]
             ]
         if params.get("slo_dur_min_down", False):
             df_ch = df_ch[
-                df_ch["down_state_dur"]
-                >= params["slo_dur_min_down"]  # * params["Fs"]
+                df_ch["down_state_dur"] >= params["slo_dur_min_down"]  # * params["Fs"]
             ]
 
         df_ch = df_ch[
@@ -265,9 +251,7 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
             ).flatten()
 
             neg_peak_val = np.min(trace)
-            neg_peak_idx = np.argmin(trace) + raw_rec.time_to_sample_index(
-                start_time
-            )
+            neg_peak_idx = np.argmin(trace) + raw_rec.time_to_sample_index(start_time)
             neg_peak_time = tmp_rec.get_times()[np.argmin(trace)]
             pos_peak_val = np.max(trace)
             peak_to_peak = np.abs(neg_peak_val) + pos_peak_val
@@ -285,8 +269,7 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
             )
     event_df = pd.DataFrame(event_metadata)
     event_df["in_bounds"] = (
-        event_df["neg_peak_idx"] + sample_window + 1
-        < raw_rec.get_num_samples()
+        event_df["neg_peak_idx"] + sample_window + 1 < raw_rec.get_num_samples()
     ) & (event_df["neg_peak_idx"] - sample_window >= 0)
     event_df = event_df[event_df["in_bounds"]].drop(columns="in_bounds")
     event_df["valid"] = False
@@ -297,8 +280,7 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
                 channel_events["neg_peak_val"], params["slo_rel_thr"]
             )
             event_df.loc[
-                (event_df["channel"] == ch)
-                & (event_df["neg_peak_val"] <= threshold),
+                (event_df["channel"] == ch) & (event_df["neg_peak_val"] <= threshold),
                 "valid",
             ] = True
         else:
@@ -346,18 +328,17 @@ def process_zero_crosses(raw_rec, phase_rec, crossings, **params):
 
 def run(manager, **params):
     filt_rec, phase_rec = down_filt_rec(
+        manager,
         manager.ctx_rec,
         rec_dur=manager.config["data"].get("rec_duration"),
         **params,
     )
     so_df = detect_slow_oscs(manager, filt_rec, debug=False, **params)
     # plot_crossings(manager=manager, rec=filt_rec, crossings=so_df, **params)
-    proc_so_df = process_zero_crosses(
-        filt_rec, phase_rec, so_df.copy(), **params
-    )
+    proc_so_df = process_zero_crosses(filt_rec, phase_rec, so_df.copy(), **params)
     # plot_crossings(manager=manager, rec=filt_rec, crossings=proc_so_df, **params)
     if params.get("save", False):
-        save_path = Path(manager.config.get("output_path"), "SO")
+        save_path = Path(manager.config.get("output_path"))
         save_path.mkdir(parents=True, exist_ok=True)
         for ch in proc_so_df.index.get_level_values(0).unique():
             proc_so_df.loc[ch].to_csv(
