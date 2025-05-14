@@ -1,17 +1,20 @@
 ## infraslow_power.py
 
+import os
 import numpy as np
 from pathlib import Path
 import pandas as pd
+import time
 from scipy import signal
 from functools import partial
 from multiprocessing import Pool
-import pdb
-import json
+from tqdm import tqdm
+import warnings
 import spikeinterface.preprocessing as spp
 import ghostipy as gsp
 from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
-from ..session_helper import NumpyEncoder
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 def down_filt_ref_rec(manager, rec, rec_dur, **params):
@@ -106,6 +109,7 @@ def filter_envelope(df: pd.DataFrame, valid_times=None, **params):
         shape, _ = gsp.filter_data_fir(
             tmp_data,
             filter_coeff,
+            threads=os.cpu_count(),
             axis=0,
             input_index_bounds=[frm, to],
             output_index_bounds=[filter_delay, filter_delay + to - frm],
@@ -126,6 +130,7 @@ def filter_envelope(df: pd.DataFrame, valid_times=None, **params):
         gsp.filter_data_fir(
             tmp_data,
             filter_coeff,
+            threads=os.cpu_count(),
             axis=0,
             input_index_bounds=[start, stop],
             output_index_bounds=[
@@ -144,6 +149,7 @@ def filter_envelope(df: pd.DataFrame, valid_times=None, **params):
 
 
 def extract_power(state_dict, df, **params):
+    start_time = time.time()
     psd_dict = {
         ch: {"freq": [], "pow": []} for ch in df.columns.get_level_values(0).unique()
     }
@@ -156,19 +162,24 @@ def extract_power(state_dict, df, **params):
             if offset - onset < 120:
                 continue
             tmp_data = df.loc[onset:offset, (ch, "filt_env")]
-            f, Pxx = signal.welch(tmp_data, fs=250, nperseg=4096 * 6, average="mean")
+            f, Pxx = signal.welch(
+                tmp_data, fs=params["Fs"], nperseg=4096 * 6, average="mean"
+            )
             psd_dict[ch]["freq"].append(f)
             psd_dict[ch]["pow"].append(
                 np.asarray([np.real_if_close(val, tol=1000) for val in Pxx])
             )
         psd_dict[ch]["freq"] = np.asarray(psd_dict[ch]["freq"])
         psd_dict[ch]["pow"] = np.asarray(psd_dict[ch]["pow"])
+    print(f"time to extract_power {time.time() - start_time:.2f} seconds")
     return psd_dict
 
 
 def autocorr_sig(df, **params):
+    start_time = time.time()
     lags = params.get("lags", 120 * params["Fs"])
     acorr = {}
+    tasks = []
     for name, group in df.groupby(level=0, axis=1):
         acorr[name] = []
         mask = group.loc[:, (name, "mask")].astype(bool).copy()
@@ -178,22 +189,34 @@ def autocorr_sig(df, **params):
             .groupby((~mask).cumsum())
             .apply(lambda x: (x.index[0], x.index[-1]))
         )
-        process_span_partial = partial(process_span, filt_env=filt_env, lags=lags)
+        tasks.extend([(name, span, filt_env.copy(), lags) for span in spans])
+        # process_span_partial = partial(name=name, span=process_span, filt_env=filt_env.copy(), lags=lags)
         print(f"{len(spans)} spans found for ch: {name}")
-        with Pool(processes=24) as pool:
-            results = pool.map(process_span_partial, spans)
-        acorr[name].extend(results)
-        # for start, end in spans:
-        #     tmp = filt_env.loc[start:end].to_numpy()
-        #
-        #     acorr[name].append(autocorr(tmp, lags))
+    with Pool(processes=24) as pool:
+        # results = pool.map(process_span_partial, spans)
+        results = list(
+            tqdm(
+                pool.starmap(_process_span, tasks),
+                total=len(tasks),
+                leave=False,
+                desc="computing acorrs",
+            )
+        )
+    for name, tmp_acorr in results:
+        acorr[name].append(tmp_acorr)
+    # acorr[name].extend(results)
+    # for start, end in spans:
+    #     tmp = filt_env.loc[start:end].to_numpy()
+    #
+    #     acorr[name].append(autocorr(tmp, lags))
+    print(f"time to autocorr_sig {time.time() - start_time:.2f} seconds")
     return acorr
 
 
-def process_span(span, filt_env, lags):
+def _process_span(name, span, filt_env, lags):
     start, end = span
     tmp = filt_env.loc[start:end].to_numpy()
-    return autocorr(tmp, lags)
+    return name, autocorr(tmp, lags)
 
 
 def autocorr(x, lags):
