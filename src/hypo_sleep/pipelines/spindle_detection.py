@@ -201,7 +201,7 @@ def run(manager, **params):
                 valid_spans[ch].to_csv(
                     Path(
                         manager.config["output_path"],
-                        f"spindle_events_ch-{ch}_{manager.config.get("config_id")}.csv",
+                        f"spindle_events_ch-{int(ch):02d}_{manager.config.get("config_id")}.csv",
                     ),
                 )
         with open(

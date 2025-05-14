@@ -9,18 +9,19 @@ from scipy import signal
 from functools import partial
 from multiprocessing import Pool
 from tqdm import tqdm
+import json
 import warnings
 import spikeinterface.preprocessing as spp
 import ghostipy as gsp
 from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
+from ..session_helper import NumpyEncoder
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 def down_filt_ref_rec(manager, rec, rec_dur, **params):
     ref_method = params.get("ref_method", None)
-    if ref_method != "local":
-        local_rad = None
+    local_rad = params.get("local_radius", None)
     rec = spp.resample(rec, resample_rate=params["Fs"])
     ref_rec = spp.common_reference(rec, reference=ref_method, local_radius=local_rad)
     valid_times = get_valid_times(ref_rec)
@@ -192,7 +193,7 @@ def autocorr_sig(df, **params):
         tasks.extend([(name, span, filt_env.copy(), lags) for span in spans])
         # process_span_partial = partial(name=name, span=process_span, filt_env=filt_env.copy(), lags=lags)
         print(f"{len(spans)} spans found for ch: {name}")
-    with Pool(processes=24) as pool:
+    with Pool(processes=os.cpu_count()) as pool:
         # results = pool.map(process_span_partial, spans)
         results = list(
             tqdm(
@@ -264,7 +265,7 @@ def run(manager, **params):
         with open(
             Path(
                 manager.config["output_path"],
-                f"infraslow-acorr_{manager.config.get('config_id')}.json",
+                f"infraslow-acorr_{params['region']}_{manager.config.get('config_id')}.json",
             ),
             "w",
         ) as f:
