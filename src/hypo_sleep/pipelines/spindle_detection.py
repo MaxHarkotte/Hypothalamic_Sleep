@@ -23,7 +23,7 @@ def down_filt_rec(manager, rec, rec_dur, **params):
     filter_coeffs = get_filter_coeff(params["Fs"], params["filter_coeffs"])
     filt_rec = filter_recording(
         manager,
-        recording=rec,
+        recording=None,
         filter_coeff=filter_coeffs,
         valid_times=valid_times,
         target_fs=params["Fs"],
@@ -182,7 +182,8 @@ def get_spi_density(manager, df, valid_spans, channels, **params):
 
 
 def run(manager, **params):
-    rec = manager.ctx_rec
+
+    rec = getattr(manager, f"{params['region'].lower()}_rec")
     rec_duration = manager.config["data"].get("rec_duration", None)
     rec = down_filt_rec(manager, rec, rec_duration, **params)
     channels = params.pop("channels", rec.get_channel_ids())

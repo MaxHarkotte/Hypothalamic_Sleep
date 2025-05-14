@@ -16,16 +16,25 @@ class Session:
         self.config = self.load_config(path, animal_id, date, config_id)
         # load raw cortical data
         ctx_chs = self.config["data"].get("ctx_channels", None)
-        self.ctx_rec = self.load_rec(channels=ctx_chs, concatenate=True)
+        self.ctx_rec = self.load_rec(
+            channels=ctx_chs, concatenate=True, rec_path=kwargs.get("rec_path", None)
+        )
         down_ctx_rec = spp.resample(
             self.ctx_rec,
             resample_rate=self.config["scoring"]["scoring_Fs"],
         )
         # load raw hypothalamic data
         hyp_chs = self.config["data"].get("hyp_channels", None)
-        probe = self.get_probe(self.config["data"].get("probe_path", None))
-        self.hyp_rec = self.load_rec(channels=hyp_chs, probe=probe, concatenate=True)
-        self.scoring = self.load_scoring()
+        probe = self.get_probe(
+            kwargs.get("probe_path", self.config["data"].get("probe_path", None))
+        )
+        self.hyp_rec = self.load_rec(
+            channels=hyp_chs,
+            probe=probe,
+            concatenate=True,
+            rec_path=kwargs.get("rec_path", None),
+        )
+        self.scoring = self.load_scoring(scoring_path=kwargs.get("scoring_path", None))
         self.state_dict = make_state_dict(
             self.scoring,
             self.config["scoring"],
@@ -44,10 +53,12 @@ class Session:
             config = json.load(f)
         return config
 
-    def load_scoring(
-        self,
-    ):
-        scoring_file = self.config["scoring"].get("scoring_path")
+    def load_scoring(self, scoring_path=None):
+        scoring_file = (
+            scoring_path
+            if scoring_path is not None
+            else self.config["scoring"].get("scoring_path")
+        )
         scoring = mat73.loadmat(scoring_file, use_attrdict=True)["SlStNew"]
         hypno = scoring["codes"][:, 0].astype(float)
         return hypno

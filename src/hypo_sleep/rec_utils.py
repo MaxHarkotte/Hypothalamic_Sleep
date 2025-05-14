@@ -55,6 +55,15 @@ def load_rec(
     return recording
 
 
+def get_corr_device_channel_indices(rec, probe):
+    contact_ids = probe.contact_ids
+    ch_ids = rec.get_channel_ids()
+    dev_ch_inds = np.array(
+        [np.where(ch_ids == str(int(id) - 1))[0][0] for id in contact_ids]
+    )
+    return np.roll(dev_ch_inds, shift=-1)
+
+
 def get_probe(path, animal):
     probe_path = list(Path(path, "probes").glob(f"*{animal}*.json"))
     if len(probe_path) > 1:

@@ -12,153 +12,7 @@ from ..rec_utils import (
     get_valid_times,
     resample_recording,
 )
-
-
-def load_spindles(manager, channel):
-    # load spindles from file
-    spindle_files = list(
-        Path(manager.config["output_path"]).glob(
-            f"spindle_events_ch-{str(channel)}_{manager.config.get("config_id")}.csv"
-        )
-    )
-    if len(spindle_files) == 0:
-        raise FileNotFoundError(f"No spindle files found for channel {channel}.")
-    if len(spindle_files) > 1:
-        raise ValueError(f"Multiple spindle files found for channel {channel}.")
-    valid_spans = pd.read_csv(spindle_files[0])
-    return valid_spans
-
-
-def load_SOs(manager, channel):
-
-    so_files = list(
-        Path(manager.config["output_path"]).glob(
-            f"so-df_ch-{int(channel):02d}_{manager.config.get("config_id")}.csv"
-        )
-    )
-    if len(so_files) == 0:
-        raise FileNotFoundError(f"No SO files found for channel {channel}.")
-    if len(so_files) > 1:
-        raise ValueError(f"Multiple SO files found for channel {channel}.")
-    valid_spans = pd.read_csv(so_files[0])
-    return valid_spans.loc[
-        :,
-        [
-            "down_crossing",
-            "neg_peak_time",
-            "neg_peak_val",
-            "up_crossing",
-            "end_crossing",
-        ],
-    ]
-
-
-def get_spans(manager, trigger, valid_spans=None, **params):
-    """
-    Must combine 'window' and 'window_shift' to center the event within
-    the window for state-transition events.
-    """
-    if "spi" in trigger:
-        trigger = trigger.split("-")[1].lower()
-        assert trigger in ["center", "onset", "offset"]
-        if valid_spans is None:
-            raise ValueError("valid_spans must be provided for spindle times.")
-        if trigger == "center":
-            # TODO: should find closest time to this time in time vector
-            offsets = valid_spans.duration / 2
-        if trigger == "onset":
-            offsets = np.zeros(len(valid_spans))
-        if trigger == "offset":
-            offsets = valid_spans.duration
-        chunks = [
-            (
-                event.start + offset - params.get("window"),
-                event.start
-                + offset
-                + params.get("window")
-                + params.get("spectra_window", 0),
-            )
-            for (_, event), offset in zip(valid_spans.iterrows(), offsets)
-        ]
-    elif "so" in trigger:
-        trigger = trigger.split("-")[1].lower()
-        assert trigger in ["peak", "down", "end"]
-        if valid_spans is None:
-            raise ValueError("valid_spans must be provided for SO times.")
-        if trigger == "peak":
-            offsets = valid_spans.neg_peak_time - valid_spans.down_crossing
-        if trigger == "down":
-            offsets = np.zeros(len(valid_spans))
-        if trigger == "end":
-            offsets = valid_spans.end_crossing - valid_spans.down_crossing
-        chunks = [
-            (
-                event.down_crossing + offset - params.get("window"),
-                event.down_crossing
-                + offset
-                + params.get("window")
-                + params.get("spectra_window", 0),
-            )
-            for (_, event), offset in zip(valid_spans.iterrows(), offsets)
-        ]
-
-    else:
-        state, trigger = trigger.split("-")
-        state = state.upper()
-        trigger = trigger.lower()
-        trig_dict = {"onset": 0, "offset": 1}
-        assert state in ["WAKE", "NREM", "REM"]
-        if trigger == "onset":
-            good_inds = np.where(
-                (
-                    manager.state_dict[state]["times"][1]
-                    - manager.state_dict[state]["times"][0]
-                    + params.get("window_shift", 0)
-                    + params.get("spectra_window", 0)
-                )
-                > params.get("window")
-            )[0]
-        elif trigger == "offset":
-            good_inds = np.where(
-                (
-                    (
-                        manager.state_dict[state]["times"][0][1:]
-                        - manager.state_dict[state]["times"][1][:-1]
-                        + params.get("window_shift", 0)
-                    )
-                    > params.get("window")
-                )
-                & (
-                    manager.state_dict[state]["times"][1]
-                    - manager.state_dict[state]["times"][0]
-                    + params.get("window_shift", 0)
-                    + params.get("spectra_window", 0)
-                    > params.get("window")
-                )
-            )[0]
-        else:
-            raise ValueError(
-                f"Invalid trigger {trigger}. Must be one of ['onset', 'offset']."
-            )
-        # good_inds = np.where(
-        #     manager.state_dict[state][trigger] - manager.state_dict[state][trigger]
-        #     > (params.get("window") * params.get("Fs"))
-        # )[0]
-        chunks = [
-            [
-                manager.state_dict[state]["times"][trig_dict[trigger]][i]
-                + params.get("window_shift", 0)
-                - params.get("window"),
-                manager.state_dict[state]["times"][trig_dict[trigger]][i]
-                + (
-                    params.get("window_shift", 0)
-                    + params.get("window")
-                    + params.get("spectra_window", 0)
-                ),
-            ]
-            for i in good_inds
-        ]
-    return chunks
+from ..session_helper import get_spans, load_events
 
 
 def down_filt_ref_rec(manager, rec, rec_dur, **params):
@@ -248,10 +102,10 @@ def get_spectra(rec, chunks, channels=None, **params):
 
 def run(manager, **params):
     trigger = params.pop("trigger")
-    if "spi" in trigger:
-        valid_spans = load_spindles(manager, channel=params.get("spi_ch"))
-    elif "so" in trigger:
-        valid_spans = load_SOs(manager, channel=params.get("so_ch"))
+    if trigger.split("-")[0] in ["so", "spi"]:
+        valid_spans = load_events[trigger.split("-")[0]](
+            manager, channel=params.get(f"{trigger.split('-')[0]}_ch")
+        )
     else:
         valid_spans = None
     if params["region"].lower() == "ctx":
