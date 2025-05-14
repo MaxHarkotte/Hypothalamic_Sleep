@@ -317,7 +317,7 @@ def plot_spectra(
                 transparent=False,
                 bbox_inches="tight",
             )
-            plt.show(fig)
+            plt.close(fig)
 
 
 def run(manager, **params):

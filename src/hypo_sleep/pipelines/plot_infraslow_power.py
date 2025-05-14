@@ -63,10 +63,13 @@ def plot_infraslow_spans(manager, data_dict, **params):
         fig, axs = plt.subplots(
             nrows=10, ncols=3, figsize=(30, 20), sharey=True
         )
-        for ax, (start, stop) in zip(axs.ravel(), get_span_start_stop(inds)):
+        colors = plt.cm.jet(np.linspace(0, 1, len(axs.ravel()) + 1))
+        for i, (ax, (start, stop)) in enumerate(zip(axs.ravel(), get_span_start_stop(inds))):
             ax.plot(
                 df.index[start:stop] - df.index[start],
                 df.loc[:, "filt_env"].iloc[start:stop],
+                c=colors[i],
+                lw=2,
             )
             ax.spines[["right", "top"]].set_visible(False)
         fig.tight_layout()
@@ -95,6 +98,7 @@ def plot_infraslow_spans(manager, data_dict, **params):
             transparent=False,
             bbox_inches="tight",
         )
+        plt.close(fig)
 
 
 def plot_infraslow_psd(manager, data_dict, **params):
@@ -102,12 +106,13 @@ def plot_infraslow_psd(manager, data_dict, **params):
         fig, axs = plt.subplots(
             nrows=10, ncols=3, figsize=(30, 20), sharex=True, sharey=True
         )
-        for ax, freq, pow in zip(
+        colors = plt.cm.jet(np.linspace(0, 1, len(axs.ravel()) + 1))
+        for i, (ax, freq, pow) in enumerate(zip(
             axs.ravel(), psd_data["freq"], psd_data["pow"]
-        ):
-            freq_inds = np.where((freq > 0.01) & (freq < 0.2))[0]
+        )):
+            freq_inds = np.where((freq > params["filter_env_coeffs"][1]) & (freq < params["filter_env_coeffs"][2]))[0]
             max_pow_ind = pow[freq_inds].argmax()
-            ax.semilogy(freq, pow, lw=1)
+            ax.semilogy(freq, pow, c=colors[i], lw=2)
             ax.plot(
                 freq[freq_inds][max_pow_ind],
                 pow[freq_inds][max_pow_ind],
@@ -115,7 +120,7 @@ def plot_infraslow_psd(manager, data_dict, **params):
                 markersize=5,
             )
             # TODO: make these params
-            ax.set_xlim([0, 0.2])
+            ax.set_xlim([0, params["filter_env_coeffs"][2]])
             ax.set_ylim([1e-5, 10e3])
             ax.spines[["right", "top"]].set_visible(False)
         fig.tight_layout()
@@ -152,15 +157,17 @@ def plot_infraslow_psd(manager, data_dict, **params):
             transparent=False,
             facecolor="white",
         )
-
+        plt.close(fig)
 
 def plot_infraslow_acorr(manager, data_dict, **params):
     for ch, acorr in data_dict["acorr"].items():
         fig, ax = plt.subplots(figsize=(20, 10))
-        for tmp_acorr in acorr:
+        colors = plt.cm.jet(np.linspace(0, 1, len(acorr) + 1))
+        for i, tmp_acorr in enumerate(acorr):
             tmp_acorr = tmp_acorr / np.max(tmp_acorr)
             inds = np.arange(len(tmp_acorr)) / params["Fs"]
-            ax.plot(inds, tmp_acorr, label="acorr")
+            ax.plot(inds, tmp_acorr, c=colors[i], label="acorr")
+        ax.plot(np.asarray(acorr))
         ax.set_xlabel("Time (s)")
         ax.set_ylabel("Autocorrelation Coeff")
         ax.set_xlim([0, 60])  # TODO: make this a param
@@ -188,6 +195,7 @@ def plot_infraslow_acorr(manager, data_dict, **params):
             transparent=False,
             bbox_inches="tight",
         )
+        plt.close(fig)
 
 
 def get_infraslow_acorr_psd(acorr, **params):
@@ -213,7 +221,7 @@ def plot_infraslow_acorr_psd(manager, data_dict, **params):
         )
         for ax, freq, pxx in zip(axs.ravel(), freqs, psds):
             ax.semilogy(freq, pxx)
-            freq_inds = np.where((freq > 0) & (freq < 0.15))[0]
+            freq_inds = np.where((freq > params["filter_env_coeffs"][1]) & (freq < params["filter_env_coeffs"][2]))[0]
             max_pow_ind = pxx[freq_inds].argmax()
             ax.plot(
                 freq[freq_inds][max_pow_ind],
@@ -221,7 +229,7 @@ def plot_infraslow_acorr_psd(manager, data_dict, **params):
                 "ro",
                 markersize=5,
             )
-            ax.set_xlim([0, 0.15])  # TODO: make this a param
+            ax.set_xlim([0, params["filter_env_coeffs"][2]])  # TODO: make this a param
             ax.set_ylim([1e-5, 1e1])  # TODO: make this a param
             ax.spines[["right", "top"]].set_visible(False)
         fig.tight_layout()
@@ -250,6 +258,7 @@ def plot_infraslow_acorr_psd(manager, data_dict, **params):
             transparent=False,
             bbox_inches="tight",
         )
+        plt.close(fig)
 
 
 def run(manager, data_dict=None, **params):

@@ -1,5 +1,6 @@
 ## rec_utils.py
 
+import os
 import numpy as np
 import psutil
 from scipy import signal
@@ -116,6 +117,7 @@ def filter_recording(
     manager,
     recording=None,
     filter_coeff=None,
+    threads=None,
     valid_times=None,
     target_fs=None,
     decimation: int = None,
@@ -125,6 +127,8 @@ def filter_recording(
 ):
     if target_fs is None:
         target_fs = params["Fs"]
+    if threads is None:
+        threads = os.cpu_count() - 4
     region = params.get("region")
     file_append = f'{"-".join([str(i) for i in params["filter_coeffs"]]).replace(".", "_")}_{int(target_fs)}'
     rec = load_rec_from_disk(manager, rec_type=f"filtered_{file_append}", region=region)
@@ -202,6 +206,7 @@ def filter_recording(
             shape, _ = gsp.filter_data_fir(
                 data_on_disk,
                 filter_coeff,
+                threads=threads,
                 axis=0,
                 input_index_bounds=[frm, to],
                 output_index_bounds=[filter_delay, filter_delay + to - frm],
@@ -224,6 +229,7 @@ def filter_recording(
             gsp.filter_data_fir(
                 data_on_disk,
                 filter_coeff,
+                threads=threads,
                 axis=0,
                 input_index_bounds=[start, stop],
                 output_index_bounds=[
@@ -351,7 +357,7 @@ def save_rec(
     recording,
     rec_type,
     region,
-    job_kwargs={"n_jobs": 24, "chunk_duration": "1s", "progress_bar": True},
+    job_kwargs={"n_jobs": os.cpu_count() - 4, "chunk_duration": "1s", "progress_bar": True},
 ):
     save_folder = Path(manager.config.get("output_path"), "rec", region, rec_type)
     if not save_folder.parent.parent.exists():
