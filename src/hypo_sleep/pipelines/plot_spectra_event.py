@@ -17,6 +17,7 @@ plt.rc("xtick", labelsize=SMALL_SIZE)  # fontsize of the tick labels
 plt.rc("ytick", labelsize=SMALL_SIZE)  # fontsize of the tick labels
 plt.rc("legend", fontsize=SMALL_SIZE)  # legend fontsize
 plt.rc("figure", titlesize=BIGGER_SIZE)
+trigger_dir_dict = {"so": "slow_osc", "spi": "spindles", "nrem": None}
 
 
 def load_spectra(manager, **params):
@@ -26,9 +27,12 @@ def load_spectra(manager, **params):
     channels = params.get("spectra_chs")
 
     spectra_files = list(
-        Path(manager.config["output_path"]).glob(
-            f"spectra_{trigger}-{type}_ch-*"
-            f"_{manager.config.get('config_id')}.npz"
+        Path(
+            manager.config["output_path"],
+            "spectra",
+            # trigger_dir_dict[trigger.split("-")[0].lower()],
+        ).glob(
+            f"spectra_{trigger}-{type}_ch-*" f"_{manager.config.get('config_id')}.npz"
         )
     )
     if len(spectra_files) == 0:
@@ -43,14 +47,12 @@ def load_spectra(manager, **params):
 
 
 def baseline_correction(data, time_arr, baseline_segment):
-    if time_arr[0] != 0:
-        time_arr -= time_arr[0]
+    # if time_arr[0] != 0:
+    #     time_arr -= time_arr[0]
     baseline_inds = np.argwhere(
         (time_arr >= baseline_segment[0]) & (time_arr <= baseline_segment[1])
     ).T[0]
-    [time_axis] = np.arange(len(data.shape))[
-        np.asarray(data.shape) == time_arr.size
-    ]
+    [time_axis] = np.arange(len(data.shape))[np.asarray(data.shape) == time_arr.size]
     baseline_data = data.take(
         indices=baseline_inds, axis=time_axis
     )  # [baseline_inds, :]
@@ -68,6 +70,10 @@ def plot_psd(
     channels=None,
     **params,
 ):
+    if params["trigger"].split("-")[0] in ["spi", "so"]:
+        trigger_ch = params[f"{params["trigger"].split("-")[0]}_ch"]
+    else:
+        trigger_ch = ""
     if channels is None:
         channels = spectra.keys()
     save_path = Path(plot_path)
@@ -128,7 +134,7 @@ def plot_psd(
         Path(
             plot_path,
             (
-                f"{params['trigger']}_all-{params['region']}-chs_"
+                f"trig_{int(trigger_ch):02d}_{params['trigger']}_all-{params['region']}-chs_"
                 f"{manager.config.get('config_id')}.png"
             ),
         ),
@@ -146,6 +152,10 @@ def plot_spectra(
     channels=None,
     **params,
 ):
+    if params["trigger"].split("-")[0] in ["spi", "so"]:
+        trigger_ch = f"_{int(params[f"{params["trigger"].split("-")[0]}_ch"]):02d}"
+    else:
+        trigger_ch = ""
     freq_lims = params.get("freq_lims", (0, 45))
     plot_method = params["plot_params"].get("plot_method", "avg")
     if channels is None:
@@ -164,37 +174,33 @@ def plot_spectra(
                 zip(tmp_spectra, time_arr[ch])
             ):
                 fig, ax = plt.subplots(figsize=(15, 9))
+                offset_time = tmp_time - tmp_time[0] + params.get("window_shift", 0)
+
                 # avg_spectra = spectra.reshape(*shape, -1).mean(axis=0)
                 if plot_method == "zscore":
                     event_spectra = stats.zscore(event_spectra, axis=0, ddof=1)
                 elif plot_method == "baseline_corr":
                     event_spectra = baseline_correction(
                         event_spectra,
-                        time_arr=time_arr,
-                        baseline_segment=(0, 1),
+                        time_arr=offset_time,
+                        baseline_segment=(-1.5, -0.5),
                     )
                 elif plot_method == "avg":
-                    raise ValueError(
-                        "Cannot average spectra for single events"
-                    )
+                    raise ValueError("Cannot average spectra for single events")
                 else:
                     event_spectra = event_spectra.T
                 if params.get("norm", False):
-                    event_spectra /= np.nanmax(event_spectra, axis=1)[
-                        :, np.newaxis
-                    ]
-                freq_inds = np.where(
-                    (freqs >= freq_lims[0]) & (freqs <= freq_lims[1])
-                )[0]
+                    event_spectra /= np.nanmax(event_spectra, axis=1)[:, np.newaxis]
+                freq_inds = np.where((freqs >= freq_lims[0]) & (freqs <= freq_lims[1]))[
+                    0
+                ]
                 vmin = np.round(np.nanmin(event_spectra[freq_inds, :]), 1)
                 vmax = np.round(
                     np.nanmean(event_spectra[freq_inds, :])
                     + np.nanstd(event_spectra[freq_inds, :]) * 3,
                     1,
                 )
-                offset_time = (
-                    tmp_time - tmp_time[0] + params.get("window_shift", 0)
-                )
+                # offset_time = tmp_time - tmp_time[0] + params.get("window_shift", 0)
                 im = ax.pcolormesh(
                     offset_time,
                     freqs[freq_inds],
@@ -215,9 +221,7 @@ def plot_spectra(
                 #         np.round(time_arr[: shape[1]][-1] - time_arr[0] - window, 1) - 5,
                 #     ]
                 # )
-                xlabel = (
-                    f"Time from {" ".join(params["trigger"].split("-"))} (s)"
-                )
+                xlabel = f"Time from {" ".join(params["trigger"].split("-"))} (s)"
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel("Frequency (Hz)")
                 ax.set_ylim(freq_lims)
@@ -228,6 +232,7 @@ def plot_spectra(
                     Path(
                         save_path,
                         (
+                            f"trig_{trigger_ch}_"
                             f"{params["trigger"]}_spectra_"
                             f"{plot_method}_"
                             f"{int(ch):02d}-itr{itr:02d}.png"
@@ -261,9 +266,7 @@ def plot_spectra(
                 cbar_label = "Power"
             if params.get("norm", False):
                 avg_spectra /= np.nanmax(avg_spectra, axis=1)[:, np.newaxis]
-            freq_inds = np.where(
-                (freqs >= freq_lims[0]) & (freqs <= freq_lims[1])
-            )[0]
+            freq_inds = np.where((freqs >= freq_lims[0]) & (freqs <= freq_lims[1]))[0]
             vmin = np.round(np.nanmin(avg_spectra[freq_inds, :]), 1)
             vmax = np.round(
                 np.nanmean(avg_spectra[freq_inds, :])
@@ -307,7 +310,8 @@ def plot_spectra(
                 Path(
                     save_path,
                     (
-                        f"{params["trigger"]}_spectra_"
+                        f"trig{trigger_ch}"
+                        f"_{params["trigger"]}_spectra_"
                         f"{plot_method}_"
                         f"{int(ch):02d}.png"
                     ),

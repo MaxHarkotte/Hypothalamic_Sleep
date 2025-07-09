@@ -41,6 +41,9 @@ class Session:
             down_ctx_rec.get_num_samples(),
             down_ctx_rec.get_times(),
         )
+        self.get_param_config(
+            path=kwargs.get("param_json_path", self.config.get("param_json_path", None))
+        )
 
     def load_config(self, path, animal_id: str, date, config_id):
         config_path = Path(path, animal_id, date, "analysis_configs")
@@ -93,6 +96,18 @@ class Session:
 
     def get_probe(self, probe_path):
         return pi.read_probeinterface(probe_path).probes[0]
+
+    def get_param_config(self, path=None):
+        if path is None:
+            path = Path(self.config["raw_data_path"]).parent.parent
+        config_files = list(path.glob("rec_params_config.json"))
+        if len(config_files) != 1:
+            raise ValueError(
+                f"only 1 file should be found for param config JSON, but {config_files} were found"
+            )
+        with open(config_files[0]) as fp:
+            param_config = json.load(fp)
+        self.param_sets = param_config
 
     def get_path(base_path, animal="", date=""):
         if not isinstance(base_path, PosixPath):

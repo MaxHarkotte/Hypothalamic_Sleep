@@ -6,6 +6,7 @@ from pathlib import Path, PosixPath
 import os
 from uuid import uuid4
 from datetime import datetime as dt
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
 
 class Config:
@@ -55,7 +56,7 @@ class Config:
                 {
                     "pipeline": "resample_recording",
                     "parameters": {
-                        "Fs": 250,
+                        "resample_id": "250_132b",
                         "save": True,
                         "region": "ctx",
                     },
@@ -63,7 +64,7 @@ class Config:
                 {
                     "pipeline": "resample_recording",
                     "parameters": {
-                        "Fs": 250,
+                        "resample_id": "250_132b",
                         "save": True,
                         "region": "hyp",
                     },
@@ -71,8 +72,8 @@ class Config:
                 {
                     "pipeline": "reference_recording",
                     "parameters": {
-                        "Fs": 250,
-                        "ref_method": "global",
+                        "reference_id": "ctx_global_fe80",
+                        "resample_id": "250_132b",
                         "region": "ctx",
                         "save": True,
                     },
@@ -80,9 +81,8 @@ class Config:
                 {
                     "pipeline": "reference_recording",
                     "parameters": {
-                        "Fs": 250,
-                        "ref_method": "local",
-                        "local_radius": (30, 100),
+                        "reference_id": "hyp_local_ea26",
+                        "resample_id": "250_132b",
                         "region": "hyp",
                         "save": True,
                     },
@@ -90,10 +90,8 @@ class Config:
                 {
                     "pipeline": "filter_recording",
                     "parameters": {
-                        "Fs": 250,
-                        "ref_method": "global",
-                        "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                        "filter_order": 6,
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "ctx_global_fe80",
                         "region": "ctx",
                         "save": True,
                     },
@@ -101,10 +99,8 @@ class Config:
                 {
                     "pipeline": "filter_recording",
                     "parameters": {
-                        "Fs": 250,
-                        "ref_method": "local",
-                        "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                        "filter_order": 6,
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "hyp_local_ea26",
                         "region": "hyp",
                         "save": True,
                     },
@@ -112,9 +108,8 @@ class Config:
                 {
                     "pipeline": "filter_recording",
                     "parameters": {
-                        "Fs": 250,
-                        "ref_method": "global",
-                        "filter_coeffs": [9, 10, 16, 17],
+                        "filter_id": "spindle_a0a3",
+                        "reference_id": "ctx_global_fe80",
                         "region": "ctx",
                         "save": True,
                     },
@@ -122,245 +117,520 @@ class Config:
                 {
                     "pipeline": "filter_recording",
                     "parameters": {
-                        "Fs": 250,
-                        "ref_method": "local",
-                        "filter_coeffs": [9, 10, 16, 17],
+                        "filter_id": "spindle_a0a3",
+                        "reference_id": "hyp_local_ea26",
                         "region": "hyp",
                         "save": True,
+                    },
+                },
+                {
+                    "pipeline": "filter_recording",
+                    "parameters": {
+                        "filter_id": "so_3c1a",
+                        "reference_id": "ctx_global_fe80",
+                        "region": "ctx",
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "filter_recording",
+                    "parameters": {
+                        "filter_id": "so_3c1a",
+                        "reference_id": "hyp_local_ea26",
+                        "region": "hyp",
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "detection_spindle",
+                    "parameters": {
+                        "channels": rec_info["ctx_channels"],
+                        "Fs": 250,  # Hz
+                        "region": "ctx",
+                        "filter_id": "spindle_a0a3",
+                        "reference_id": "ctx_global_fe80",
+                        "detection_id": "spindle_detect_2817",
+                        "save": True,
+                        "load": False,
                     },
                 },
                 # {
-                #     "pipeline": "spindle_detection",
+                #     "pipeline": "detection_spindle",
                 #     "parameters": {
-                #         "channels": rec_info["ctx_channels"],
+                #         "channels": rec_info["hyp_channels"],
                 #         "Fs": 250,  # Hz
-                #         "dur_min": [0.5, 0.25],
-                #         "dur_max": [2.5, 2.5],
-                #         "thr": [1.5, 2, 2.5],
-                #         "thr_chan": [],
-                #         "freq": [10, 16],
-                #         "peakdist_max": 0.125,
-                #         "filter_coeffs": [9, 10, 16, 17],
-                #         "filter_order": 6,
-                #         "ref_method": "global",
+                #         "region": "hyp",
+                #         "filter_id": "spindle_a0a3",
+                #         "reference_id": "hyp_local_ea26",
+                #         "detection_id": "spindle_detect_2817",
                 #         "save": True,
                 #         "load": False,
                 #     },
                 # },
-                # {
-                #     "pipeline": "event_spectra",
-                #     "parameters": {
-                #         "Fs": 250,  # Hz
-                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                #         "filter_order": 6,
-                #         "spectra_window": 0.5,  # seconds
-                #         "spectra_overlap": 0.1,  # seconds
-                #         "window": 4,  # seconds
-                #         "trigger": "spi-center",
-                #         "window_shift": 0,
-                #         "spi_ch": "39",
-                #         "spectra_chs": ["1", "7", "26", "12", "31"],
-                #         "PSD": False,
-                #         "spectrogram": True,
-                #         "region": "hyp",
-                #         "ref_method": "global",
-                #         "plot": True,
-                #         "plot_params": {"norm": True, "plot_method": "avg"},
-                #         "save": True,
-                #     },
-                # },
-                # {
-                #     "pipeline": "event_spectra",
-                #     "parameters": {
-                #         "Fs": 250,  # Hz
-                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                #         "filter_order": 6,
-                #         "spectra_window": 0.5,  # seconds
-                #         "spectra_overlap": 0.1,  # seconds
-                #         "window": 4,  # seconds
-                #         "trigger": "spi-center",
-                #         "window_shift": 0,
-                #         "spi_ch": "39",
-                #         "spectra_chs": ["39", "45"],
-                #         "PSD": False,
-                #         "spectrogram": True,
-                #         "region": "ctx",
-                #         "ref_method": "global",
-                #         "plot": True,
-                #         "plot_params": {"norm": True, "plot_method": "avg"},
-                #         "save": True,
-                #     },
-                # },
-                # {
-                #     "pipeline": "event_spectra",
-                #     "parameters": {
-                #         "Fs": 250,  # Hz
-                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                #         "filter_order": 6,
-                #         "spectra_window": 0.5,  # seconds
-                #         "spectra_overlap": 0.1,  # seconds
-                #         "window": 4,  # seconds
-                #         "trigger": "spi-center",
-                #         "window_shift": 0,
-                #         "spi_ch": "39",
-                #         "spectra_chs": ["1", "7", "26", "12", "31"],
-                #         "PSD": True,
-                #         "spectrogram": False,
-                #         "region": "hyp",
-                #         "ref_method": "global",
-                #         "plot": True,
-                #         "plot_params": {"norm": True, "plot_method": "avg"},
-                #         "save": True,
-                #     },
-                # },
-                # {
-                #     "pipeline": "event_spectra",
-                #     "parameters": {
-                #         "Fs": 250,  # Hz
-                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                #         "filter_order": 6,
-                #         "spectra_window": 10,  # seconds
-                #         "spectra_overlap": 2,  # seconds
-                #         "window": 60,  # seconds
-                #         "trigger": "nrem-onset",
-                #         "window_shift": -30,
-                #         "spectra_chs": ["1", "7", "26", "12", "31"],
-                #         "PSD": False,
-                #         "spectrogram": True,
-                #         "region": "hyp",
-                #         "ref_method": "global",
-                #         "plot": True,
-                #         "plot_params": {"norm": True, "plot_method": "avg"},
-                #         "save": True,
-                #     },
-                # },
-                # {
-                #     "pipeline": "event_spectra",
-                #     "parameters": {
-                #         "Fs": 250,  # Hz
-                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                #         "filter_order": 6,
-                #         "spectra_window": 10,  # seconds
-                #         "spectra_overlap": 2,  # seconds
-                #         "window": 60,  # seconds
-                #         "trigger": "nrem-onset",
-                #         "window_shift": -30,
-                #         "spectra_chs": ["39", "45"],
-                #         "PSD": False,
-                #         "spectrogram": True,
-                #         "region": "ctx",
-                #         "ref_method": "global",
-                #         "plot": True,
-                #         "plot_params": {"norm": True, "plot_method": "avg"},
-                #         "save": True,
-                #     },
-                # },
-                # {
-                #     "pipeline": "SO_detection",
-                #     "parameters": {
-                #         "Fs": 250,  # Hz
-                #         "filter_coeffs": [0.01, 0.1, 4, 4.1],
-                #         "filter_order": 3,
-                #         "channels": rec_info["ctx_channels"],
-                #         "slo_dur_min": 0.5,  # seconds
-                #         "slo_dur_max": 2.0,  # seconds
-                #         # "slo_dur_max_down": 0.300,  # seconds
-                #         "slo_rel_thr": 33,
-                #         # "slo_thr": 1.5,  # SDs
-                #         # "slo_peak2peak_min": 0.7,
-                #         "save": True,
-                #     },
-                # },
-                # {
-                #     "pipeline": "event_spectra",
-                #     "parameters": {
-                #         "Fs": 250,  # Hz
-                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                #         "filter_order": 6,
-                #         "spectra_window": 1,  # seconds
-                #         "spectra_overlap": 0.8,  # seconds
-                #         "window": 5,  # seconds
-                #         "trigger": "so-peak",
-                #         "window_shift": 0,
-                #         "spectra_chs": ["1", "7", "26", "12", "31"],
-                #         "so_ch": "39",
-                #         "PSD": False,
-                #         "spectrogram": True,
-                #         "region": "hyp",
-                #         "ref_method": "global",
-                #         "plot": True,
-                #         "plot_params": {"norm": True, "plot_method": "avg"},
-                #         "save": True,
-                #     },
-                # },
-                # {
-                #     "pipeline": "event_spectra",
-                #     "parameters": {
-                #         "Fs": 250,  # Hz
-                #         "filter_coeffs": [0.1, 0.5, 120, 120.5],
-                #         "filter_order": 6,
-                #         "spectra_window": 1,  # seconds
-                #         "spectra_overlap": 0.8,  # seconds
-                #         "window": 5,  # seconds
-                #         "trigger": "so-peak",
-                #         "window_shift": 0,
-                #         "spectra_chs": ["39", "45"],
-                #         "so_ch": "39",
-                #         "PSD": False,
-                #         "spectrogram": True,
-                #         "region": "ctx",
-                #         "ref_method": "global",
-                #         "plot": True,
-                #         "plot_params": {"norm": True, "plot_method": "avg"},
-                #         "save": True,
-                #     },
-                # },
                 {
-                    "pipeline": "infraslow_power",
+                    "pipeline": "detection_SO",
                     "parameters": {
-                        "Fs": 250,  # Hz
-                        "filter_coeffs": [9, 10, 16, 17],
-                        "filter_env_coeffs": [0.0005, 0.001, 0.1, 0.1005],
-                        "filter_order": 10,
+                        "filter_id": "so_3c1a",
+                        "Fs": 250,
+                        "reference_id": "ctx_global_fe80",
+                        "detection_id": "so_detect_6f04",
                         "channels": rec_info["ctx_channels"],
-                        "state": "NREM",
                         "region": "ctx",
-                        "ref_method": "global",
                         "save": True,
-                        "plot": True,
-                        "plot_params": {
-                            "plot_types": [
-                                "spans",
-                                "psd",
-                                "acorr",
-                                "acorr_psd",
-                            ],
-                        },
                     },
                 },
                 {
-                    "pipeline": "infraslow_power",
+                    "pipeline": "mua_event",
                     "parameters": {
-                        "Fs": 250,  # Hz
-                        "filter_coeffs": [9, 10, 16, 17],
-                        "filter_env_coeffs": [0.0005, 0.001, 0.1, 0.1005],
-                        "filter_order": 10,
-                        "channels": rec_info["hyp_channels"],  # ["7", "13", "26"],
-                        "state": "NREM",
+                        "reference_id": "spike_local_ce89",
+                        "filter_id": "spike_filter_5480",
+                        "artifact_id": "zscore_5_mua_540d",
+                        "mua_id": "mua_4-5thresh_4s_baa2",
+                        "Fs": 32_000,
+                        "mua_chs": rec_info["hyp_channels"],
+                        "trigger": "so-peak",
+                        "trigger_ch": rec_info["ctx_channels"][0],
                         "region": "hyp",
-                        "ref_method": "global",
-                        "save": True,
-                        "plot": True,
-                        "plot_params": {
-                            "plot_types": [
-                                "spans",
-                                "psd",
-                                "acorr",
-                                "acorr_psd",
-                            ],
-                        },
                     },
                 },
+                {
+                    "pipeline": "mua_event",
+                    "parameters": {
+                        "reference_id": "spike_local_ce89",
+                        "filter_id": "spike_filter_5480",
+                        "artifact_id": "zscore_5_mua_540d",
+                        "mua_id": "mua_4-5thresh_4s_baa2",
+                        "Fs": 32_000,
+                        "mua_chs": rec_info["hyp_channels"],
+                        "trigger": "spi-peak",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "region": "hyp",
+                    },
+                },
+                {
+                    "pipeline": "mua_event",
+                    "parameters": {
+                        "reference_id": "spike_local_ce89",
+                        "filter_id": "spike_filter_5480",
+                        "artifact_id": "zscore_5_mua_540d",
+                        "mua_id": "mua_4-5thresh_4s_baa2",
+                        "Fs": 32_000,
+                        "mua_chs": rec_info["hyp_channels"],
+                        "trigger": "so-null",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "region": "hyp",
+                    },
+                },
+                {
+                    "pipeline": "mua_event",
+                    "parameters": {
+                        "reference_id": "spike_local_ce89",
+                        "filter_id": "spike_filter_5480",
+                        "artifact_id": "zscore_5_mua_540d",
+                        "mua_id": "mua_4-5thresh_4s_baa2",
+                        "Fs": 32_000,
+                        "mua_chs": rec_info["hyp_channels"],
+                        "trigger": "spi-null",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "region": "hyp",
+                    },
+                },
+                {
+                    "pipeline": "mua_event",
+                    "parameters": {
+                        "reference_id": "spike_local_ce89",
+                        "filter_id": "spike_filter_5480",
+                        "artifact_id": "zscore_5_mua_540d",
+                        "mua_id": "mua_4-5thresh_4s_baa2",
+                        "Fs": 32_000,
+                        "mua_chs": rec_info["hyp_channels"],
+                        "trigger": "nrem-all",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "region": "hyp",
+                    },
+                },
+                {
+                    "pipeline": "mua_event",
+                    "parameters": {
+                        "reference_id": "spike_local_ce89",
+                        "filter_id": "spike_filter_5480",
+                        "artifact_id": "zscore_5_mua_540d",
+                        "mua_id": "mua_4-5thresh_4s_baa2",
+                        "Fs": 32_000,
+                        "mua_chs": rec_info["hyp_channels"],
+                        "trigger": "rem-all",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "region": "hyp",
+                    },
+                },
+                {
+                    "pipeline": "mua_event",
+                    "parameters": {
+                        "reference_id": "spike_local_ce89",
+                        "filter_id": "spike_filter_5480",
+                        "artifact_id": "zscore_5_mua_540d",
+                        "mua_id": "mua_4-5thresh_4s_baa2",
+                        "Fs": 32_000,
+                        "mua_chs": rec_info["hyp_channels"],
+                        "trigger": "wake-all",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "region": "hyp",
+                    },
+                },
+                {
+                    "pipeline": "spectra_event",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "ctx_global_fe80",
+                        "trigger": "spi-peak",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "spectra_chs": rec_info["ctx_channels"],
+                        "spectra_id": "event_spectra_e0b5",
+                        "region": "ctx",
+                        "plot": False,
+                        "plot_params": {"norm": True, "plot_method": "zscore"},
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "spectra_event",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "hyp_local_ea26",
+                        "trigger": "spi-peak",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "spectra_chs": rec_info["hyp_channels"],
+                        "spectra_id": "event_spectra_e0b5",
+                        "region": "hyp",
+                        "plot": False,
+                        "plot_params": {"norm": True, "plot_method": "zscore"},
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "spectra_event",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "ctx_global_fe80",
+                        "trigger": "spi-null",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "spectra_chs": rec_info["ctx_channels"],
+                        "spectra_id": "event_spectra_e0b5",
+                        "region": "ctx",
+                        "plot": False,
+                        "plot_params": {"norm": True, "plot_method": "zscore"},
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "spectra_event",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "hyp_local_ea26",
+                        "trigger": "spi-null",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "spectra_chs": rec_info["hyp_channels"],
+                        "spectra_id": "event_spectra_e0b5",
+                        "region": "hyp",
+                        "plot": False,
+                        "plot_params": {"norm": True, "plot_method": "zscore"},
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "spectra_event",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "ctx_global_fe80",
+                        "trigger": "so-peak",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "spectra_chs": rec_info["ctx_channels"],
+                        "spectra_id": "event_spectra_e0b5",
+                        "region": "ctx",
+                        "plot": False,
+                        "plot_params": {"norm": True, "plot_method": "zscore"},
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "spectra_event",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "hyp_local_ea26",
+                        "trigger": "so-peak",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "spectra_chs": rec_info["hyp_channels"],
+                        "spectra_id": "event_spectra_e0b5",
+                        "region": "hyp",
+                        "plot": False,
+                        "plot_params": {"norm": True, "plot_method": "zscore"},
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "spectra_event",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "ctx_global_fe80",
+                        "trigger": "so-null",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "spectra_chs": rec_info["ctx_channels"],
+                        "spectra_id": "event_spectra_e0b5",
+                        "region": "ctx",
+                        "plot": False,
+                        "plot_params": {"norm": True, "plot_method": "zscore"},
+                        "save": True,
+                    },
+                },
+                {
+                    "pipeline": "spectra_event",
+                    "parameters": {
+                        "Fs": 250,  # Hz
+                        "filter_id": "low_lfp_0357",
+                        "reference_id": "hyp_local_ea26",
+                        "trigger": "so-null",
+                        "trigger_ch": rec_info["ctx_channels"][0],
+                        "spectra_chs": rec_info["hyp_channels"],
+                        "spectra_id": "event_spectra_e0b5",
+                        "region": "hyp",
+                        "plot": False,
+                        "plot_params": {"norm": True, "plot_method": "zscore"},
+                        "save": True,
+                    },
+                },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "ctx_global_fe80",
+                #         "trigger": "nrem-all",
+                #         "spectra_chs": rec_info["ctx_channels"],
+                #         "spectra_id": "state_spectra_65d8",
+                #         "region": "ctx",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "hyp_local_ea26",
+                #         "trigger": "nrem-all",
+                #         "spectra_chs": rec_info["hyp_channels"],
+                #         "spectra_id": "state_spectra_65d8",
+                #         "region": "hyp",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "ctx_global_fe80",
+                #         "trigger": "nrem-all",
+                #         "spectra_chs": rec_info["ctx_channels"],
+                #         "spectra_id": "state_spectra_65d8",
+                #         "region": "ctx",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "hyp_local_ea26",
+                #         "trigger": "nrem-all",
+                #         "spectra_chs": rec_info["hyp_channels"],
+                #         "spectra_id": "state_spectra_65d8",
+                #         "region": "hyp",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "ctx_global_fe80",
+                #         "trigger": "rem-all",
+                #         "spectra_chs": rec_info["ctx_channels"],
+                #         "spectra_id": "state_spectra_IRASA_8b9e",
+                #         "region": "ctx",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "hyp_local_ea26",
+                #         "trigger": "rem-all",
+                #         "spectra_chs": rec_info["hyp_channels"],
+                #         "spectra_id": "state_spectra_IRASA_8b9e",
+                #         "region": "hyp",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "ctx_global_fe80",
+                #         "trigger": "rem-all",
+                #         "spectra_chs": rec_info["ctx_channels"],
+                #         "spectra_id": "state_spectra_65d8",
+                #         "region": "ctx",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "hyp_local_ea26",
+                #         "trigger": "rem-all",
+                #         "spectra_chs": rec_info["hyp_channels"],
+                #         "spectra_id": "state_spectra_65d8",
+                #         "region": "hyp",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "ctx_global_fe80",
+                #         "trigger": "wake-all",
+                #         "spectra_chs": rec_info["ctx_channels"],
+                #         "spectra_id": "state_spectra_IRASA_8b9e",
+                #         "region": "ctx",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "hyp_local_ea26",
+                #         "trigger": "wake-all",
+                #         "spectra_chs": rec_info["hyp_channels"],
+                #         "spectra_id": "state_spectra_IRASA_8b9e",
+                #         "region": "hyp",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "ctx_global_fe80",
+                #         "trigger": "wake-all",
+                #         "spectra_chs": rec_info["ctx_channels"],
+                #         "spectra_id": "state_spectra_65d8",
+                #         "region": "ctx",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "spectra_event",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_id": "low_lfp_0357",
+                #         "reference_id": "hyp_local_ea26",
+                #         "trigger": "wake-all",
+                #         "spectra_chs": rec_info["hyp_channels"],
+                #         "spectra_id": "state_spectra_65d8",
+                #         "region": "hyp",
+                #         "plot": False,
+                #         "plot_params": {"norm": True, "plot_method": "baseline_corr"},
+                #         "save": True,
+                #     },
+                # },
+                # {
+                #     "pipeline": "infraslow_power",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [9, 10, 16, 17],
+                #         "filter_env_coeffs": [0.0005, 0.001, 0.025, 0.0255],
+                #         "filter_order": 100,
+                #         "channels": rec_info["ctx_channels"],
+                #         "state": "NREM",
+                #         "region": "ctx",
+                #         "ref_method": "global",
+                #         "save": True,
+                #         "plot": True,
+                #         "plot_params": {
+                #             "plot_types": [
+                #                 "spans",
+                #                 "psd",
+                #                 "acorr",
+                #                 "acorr_psd",
+                #             ],
+                #         },
+                #     },
+                # },
+                # {
+                #     "pipeline": "infraslow_power",
+                #     "parameters": {
+                #         "Fs": 250,  # Hz
+                #         "filter_coeffs": [9, 10, 16, 17],
+                #         "filter_env_coeffs": [0.0005, 0.001, 0.025, 0.0255],
+                #         "filter_order": 100,
+                #         "channels": rec_info["hyp_channels"],  # ["7", "13", "26"],
+                #         "state": "NREM",
+                #         "region": "hyp",
+                #         "ref_method": "global",
+                #         "save": True,
+                #         "plot": True,
+                #         "plot_params": {
+                #             "plot_types": [
+                #                 "spans",
+                #                 "psd",
+                #                 "acorr",
+                #                 "acorr_psd",
+                #             ],
+                #         },
+                #     },
+                # },
             ],
             "comments": None,
         }
@@ -441,10 +711,10 @@ class Config:
 
 
 def get_path(base_path, animal="", date="", data=True, exists=True):
-    stem = "data" if data else "processed_data"
+    # stem = "data" if data else "processed_data"
     if not isinstance(base_path, PosixPath):
         base_path = Path(base_path)
-    data_path = Path(base_path, stem, animal, date)
+    data_path = Path(base_path, animal, date)
     if not data_path.exists() and exists:
         raise ValueError(f"Data path {data_path} does not exist.")
     elif not data_path.exists() and not exists:
@@ -452,18 +722,60 @@ def get_path(base_path, animal="", date="", data=True, exists=True):
     return data_path
 
 
+def create_parser():
+    parser = ArgumentParser(
+        description="Extract metadata from recording and store to JSON.",
+        usage="%(prog)s [options]",
+        formatter_class=ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--data_path",
+        "-p",
+        type=str,
+        help="Path to raw data (e.g. /home/born-animal/Desktop/data/)",
+    )
+    parser.add_argument(
+        "--output_path",
+        "-o",
+        type=str,
+        default=os.getcwd(),
+        help="Path to save output (e.g. /home/born-animal/Desktop/data/). Default is current directory",
+    )
+    parser.add_argument(
+        "--animal",
+        "-a",
+        type=str,
+        help="animal ID (e.g. HYDO01)",
+    )
+    parser.add_argument(
+        "--date",
+        "-d",
+        type=str,
+        help="recording date (e.g. 2024-07-24_05-57-05)",
+    )
+    parser.add_argument(
+        "--name",
+        "-n",
+        type=str,
+        default="test_config",
+        help="name with which to refer to config",
+    )
+    return parser
+
+
 def main():
+
+    parser = create_parser()
+    args = parser.parse_args()
     config = Config(
-        data_path="/home/born-animal/Desktop/",
-        save_path="/home/born-animal/Desktop/",
-        # data_path="/gpfs01/born/animal/Hypothalamic_Sleep/data/raw/",
-        # save_path="/gpfs01/born/animal/DanielG/hypo_sleep/",
-        animal_id="HYDO03",
-        date="2025-02-18_09-19-26",
+        data_path=args.data_path,
+        save_path=args.output_path,
+        animal_id=args.animal,
+        date=args.date,
     )
     config.make_default_config()
     config.update_config(
-        name="test_config",
+        name=args.name,
         comments="test config",
     )
     config.save_config()

@@ -3,12 +3,16 @@ import numpy as np
 import json
 from pathlib import Path
 import gc
+import pdb
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from hypo_sleep.session_manager import Session
 from hypo_sleep.pipelines import (
-    spindle_detection,
+    detection_spindle,
+    detection_so,
+    mua_event,
+    plot_spectra_event,
+    spectra_event,
     infraslow_power,
-    plot_event_spectra,
     plot_infraslow_power,
 )
 from hypo_sleep.rec_utils import (
@@ -16,8 +20,6 @@ from hypo_sleep.rec_utils import (
     reference_recording,
     filter_recording,
 )
-from hypo_sleep.pipelines import so_detection_time as so_detection
-from hypo_sleep.pipelines import event_spectra_time as event_spectra
 from hypo_sleep.session_helper import NumpyEncoder
 
 
@@ -34,7 +36,11 @@ class PipelineManager(Session):
 
     def add_pipeline(self, pipeline_name, **params):
         pipeline = eval(pipeline_name.lower())
-        print(f"Running pipeline {pipeline_name}")
+        print(
+            "------------------\n"
+            f"Running pipeline {pipeline_name}\n"
+            "------------------"
+        )
         if hasattr(pipeline, "run"):
             result = pipeline.run(self, **params)
         else:
@@ -57,6 +63,14 @@ class PipelineManager(Session):
         for pipeline in self.pipelines:
             pip_time = time.time()
             name, params = pipeline["pipeline"], pipeline["parameters"]
+            rel_params = [
+                self.param_sets[pip_type.split("_")[0]].get(val)
+                for pip_type, val in params.items()
+                if "_id" in pip_type
+            ]
+            for param_set in rel_params:
+                params.update(param_set)
+            # params.update(self.param_sets[pip_type].get(params.get(f"{pip_type}_id")))
             results[name] = self.add_pipeline(name, **params)
             gc.collect()
             print(f"Pipeline {name} run time: {time.time() - pip_time:.2f} seconds")

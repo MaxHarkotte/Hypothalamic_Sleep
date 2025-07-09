@@ -3,15 +3,17 @@
 import os
 import numpy as np
 import psutil
+from functools import wraps
+from time import time
+from pathlib import Path, PosixPath
+from typing import List, Literal
+from tqdm import tqdm
 from scipy import signal
 import spikeinterface as si
 import spikeinterface.preprocessing as spp
 import spikeinterface.extractors as se
 import probeinterface as pi
 import ghostipy as gsp
-from pathlib import Path, PosixPath
-from typing import List, Literal
-from tqdm import tqdm
 
 
 def load_rec(
@@ -132,15 +134,25 @@ def filter_recording(
     decimation: int = None,
     channels=None,
     verbose=False,
+    save=True,
     **params,
 ):
+    params.update(manager.param_sets["reference"][params.get("reference_id")])
+    params.update(manager.param_sets["filter"][params.get("filter_id")])
+    assert (
+        params["filter_Fs"] == params["reference_Fs"]
+    ), f'`filter_Fs` {params["filter_Fs"]} != `reference_Fs` {params["reference_Fs"]}'
+    param_id = f"{params["reference_id"]}_{params['filter_id']}"
     if target_fs is None:
-        target_fs = params["Fs"]
+        target_fs = params["filter_Fs"]
     if threads is None:
         threads = os.cpu_count() - 4
     region = params.get("region")
-    file_append = f'{"-".join([str(i) for i in params["filter_coeffs"]]).replace(".", "_")}_{int(target_fs)}'
-    rec = load_rec_from_disk(manager, rec_type=f"filtered_{file_append}", region=region)
+    rec = load_rec_from_disk(
+        manager,
+        param_id=param_id,
+        region=region,
+    )
     if rec is not None:
         print("Filtered recording already exists. Loading...")
         if channels is not None:
@@ -153,20 +165,18 @@ def filter_recording(
     else:
         print("Filtered recording does not exist. Filtering...")
     if recording is None:
-        if params.get("ref_method") is not None:
+        if params.get("reference_method") is not None:
             recording = load_rec_from_disk(
                 manager,
-                rec_type=f"ref_{params["ref_method"]}_{params['Fs']}",
+                param_id=f'{params["filter_Fs"]}*{params["reference_id"]}',
                 region=region,
             )
         else:
-            recording = load_rec_from_disk(
-                manager, rec_type=f"resampled_{params['Fs']}", region=region
-            )
+            raise ValueError("`reference_method` must be provided in parameter set")
     if valid_times is None:
         valid_times = get_valid_times(recording)
     if filter_coeff is None:
-        filter_coeff = get_filter_coeff(target_fs, params["filter_coeffs"])
+        filter_coeff = get_filter_coeff(target_fs, params["filter_edges"])
     if channels is None:
         channels = recording.get_channel_ids()
     if decimation is None:
@@ -255,21 +265,30 @@ def filter_recording(
         sampling_frequency=target_fs,
         channel_ids=channels,
     )
+    sub_rec = recording.channel_slice(channel_ids=channels)
     # filtered_rec._annotations.update({"is_filtered": True})
     filtered_rec.set_times(new_timestamps)
-    filtered_rec.set_channel_offsets(recording.get_channel_offsets())
-    filtered_rec.set_channel_gains(recording.get_channel_gains())
+    filtered_rec.set_channel_offsets(sub_rec.get_channel_offsets())
+    filtered_rec.set_channel_gains(sub_rec.get_channel_gains())
     if recording.has_probe():
-        filtered_rec.set_probe(recording.get_probe(), in_place=True)
-    save_rec(manager, filtered_rec, rec_type=f"filtered_{file_append}", region=region)
+        filtered_rec.set_probe(sub_rec.get_probe(), in_place=True)
+    if save:
+        save_rec(
+            manager,
+            filtered_rec,
+            param_id=param_id,
+            region=region,
+        )
     return filtered_rec
 
 
-def resample_recording(manager, recording=None, resample_rate=250, **params):
+def resample_recording(manager, recording=None, resample_Fs=250, **params):
     # try to load existing resampled recording
+    if "resample_id" not in params.keys():
+        params = params.update(manager.param_sets[params.get("resample_id")])
     rec = load_rec_from_disk(
         manager,
-        rec_type=f"resampled_{int(resample_rate)}",
+        param_id=params.get("resample_id"),
         region=params["region"],
     )
     if rec is not None:
@@ -278,6 +297,7 @@ def resample_recording(manager, recording=None, resample_rate=250, **params):
     # if recording is None, load the raw recording
     if recording is None:
         recording = getattr(manager, f"{params['region']}_rec")
+    resample_rate = params.get("resample_Fs", resample_Fs)
     if len(recording.get_channel_ids()) <= 2:
         try:
             rec = spp.resample(recording, resample_rate=resample_rate)
@@ -314,61 +334,73 @@ def resample_recording(manager, recording=None, resample_rate=250, **params):
     save_rec(
         manager,
         rec,
-        rec_type=f"resampled_{int(resample_rate)}",
+        param_id=params.get("resample_id"),
         region=params["region"],
     )
     return rec
 
 
-def reference_recording(manager, **params):
-    recording = load_rec_from_disk(
+def reference_recording(manager, recording=None, save=True, **params):
+    if "reference_id" not in params.keys():
+        params = params.update(manager.param_sets[params.get("reference_id")])
+    rec = load_rec_from_disk(
         manager,
         region=params["region"],
-        rec_type=f"ref_{params['ref_method']}_{params['Fs']}",
+        param_id=f'*{params.get("reference_id")}',
     )
+    if rec is not None:
+        return rec
     if recording is not None:
-        return recording
-    raw_rec = load_rec_from_disk(
-        manager, region=params["region"], rec_type=f"resampled_{params['Fs']}"
-    )
-    if params["ref_method"] == "global":
+        raw_rec = recording
+    else:
+        raw_rec = load_rec_from_disk(
+            manager, region=params["region"], param_id=params.get("resample_id", "")
+        )
+    if params["reference_method"] == "global":
         recording = si.preprocessing.common_reference(
             raw_rec,
             operator="median",
             dtype=np.float64,
         )
-    elif params["ref_method"] == "single":
+    elif params["reference_method"] == "single":
         recording = si.preprocessing.common_reference(
             raw_rec,
-            reference=params["ref_method"],
+            reference=params["reference_method"],
             ref_channel_ids=params["ref_elec"],
             dtype=np.float64,
         )
-    elif params["ref_method"] == "local":
+    elif params["reference_method"] == "local":
         recording = si.preprocessing.common_reference(
             raw_rec,
             reference="local",
-            local_radius=params["local_radius"],
+            local_radius=params["reference_local_radius"],
             dtype=np.float64,
         )
-    print("sending to save_rec")
-    save_rec(
-        manager=manager,
-        recording=recording,
-        rec_type=f"ref_{params['ref_method']}_{params['Fs']}",
-        region=params["region"],
-    )
+    if save:
+        save_rec(
+            manager=manager,
+            recording=recording,
+            param_id=f'{params.get("resample_id", "")}_{params.get("reference_id")}',
+            region=params["region"],
+        )
     return recording
 
 
 def save_rec(
     manager,
     recording,
-    rec_type,
+    param_id,
     region,
-    job_kwargs={"n_jobs": os.cpu_count() - 4, "chunk_duration": "1s", "progress_bar": True},
+    job_kwargs={
+        "n_jobs": os.cpu_count() - 4,
+        "chunk_duration": "1s",
+        "progress_bar": True,
+    },
 ):
-    save_folder = Path(manager.config.get("output_path"), "rec", region, rec_type)
+    save_folder = Path(
+        Path(manager.config.get("output_path")).parent, "rec", region, param_id
+    )
+    # save_folder = Path(manager.config.get("output_path"), "rec", region, rec_type)
     if not save_folder.parent.parent.exists():
         save_folder.parent.parent.mkdir(exist_ok=True)
     if not save_folder.parent.exists():
@@ -377,11 +409,36 @@ def save_rec(
     recording.save(folder=save_folder, format="binary", **job_kwargs)
 
 
-def load_rec_from_disk(manager, rec_type, region):
-    rec_path = Path(manager.config.get("output_path"), "rec", region, rec_type)
+def load_rec_from_disk(manager, param_id, region):
+    rec_path = Path(Path(manager.config.get("output_path")).parent, "rec", region)
+
     if not rec_path.exists():
         print(f"Recording path {rec_path} does not exist.")
         return None
-    print(f"loading recording from disk.. {rec_path}")
+    exact_match = Path(rec_path, param_id)
+    if not exact_match.exists():
+        potential_rec_dirs = list(rec_path.glob(param_id))
+        if len(potential_rec_dirs) != 1:
+            print(
+                f"param_id: {param_id} is not specific enough."
+                f"{potential_rec_dirs} found\nreturning None"
+            )
+            return None
+        rec_path = potential_rec_dirs[0]
+    else:
+        rec_path = exact_match
+    print(f"loading recording from disk.. {rec_path.name}")
     recording = si.load(rec_path)
     return recording
+
+
+def timing(f):
+    @wraps(f)
+    def wrap(*args, **kw):
+        ts = time()
+        result = f(*args, **kw)
+        te = time()
+        print(f"func:{repr(f.__name__)} took: {te-ts:2.4f} s")
+        return result
+
+    return wrap

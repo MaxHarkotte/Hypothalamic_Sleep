@@ -10,6 +10,10 @@ import json
 import spikeinterface.preprocessing as spp
 from ..session_helper import NumpyEncoder
 from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
+import warnings
+from pandas.errors import SettingWithCopyWarning
+
+warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
 
 
 # def get_ctx_spindles(rec, state_dict, channels=None, **params):
@@ -20,7 +24,7 @@ from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
 def down_filt_rec(manager, rec, rec_dur, **params):
     rec = spp.resample(rec, resample_rate=params["Fs"])
     valid_times = get_valid_times(rec)
-    filter_coeffs = get_filter_coeff(params["Fs"], params["filter_coeffs"])
+    filter_coeffs = get_filter_coeff(params["Fs"], params["filter_edges"])
     filt_rec = filter_recording(
         manager,
         recording=None,
@@ -90,24 +94,31 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
     valid_spans = {}
     for channel in channels:
         tmp_df = df.loc[:, channel]
-        tmp_df.loc[:, "mask_group"] = (df["NREM"] != df["NREM"].shift()).cumsum()
-        tmp_df.loc[~df["NREM"], "mask_group"] = pd.NA
-        tmp_df.loc[:, "above_thr_1"] = (tmp_df.spi_amp_smooth > thr[channel][0]) & df[
-            "NREM"
-        ]
-        tmp_df.loc[:, "above_thr_2"] = (tmp_df.spi_amp_smooth > thr[channel][1]) & df[
-            "NREM"
-        ]
-        tmp_df.loc[:, "above_thr_3"] = (tmp_df.spi_amp_smooth > thr[channel][2]) & df[
-            "NREM"
-        ]
-        tmp_df.loc[:, "group"] = (
-            tmp_df.above_thr_1 != tmp_df.above_thr_1.shift()
+        tmp_df.loc[:, "mask_group"] = (
+            df.loc[:, "NREM"] != df.loc[:, "NREM"].shift()
         ).cumsum()
-        tmp_df.loc[~df["NREM"], "group"] = pd.NA
+        tmp_df.loc[~df.loc[:, "NREM"], "mask_group"] = pd.NA
+        tmp_df.loc[:, "above_thr_1"] = (
+            tmp_df.loc[:, "spi_amp_smooth"] > thr[channel][0]
+        ) & df.loc[:, "NREM"]
+        tmp_df.loc[:, "above_thr_2"] = (
+            tmp_df.loc[:, "spi_amp_smooth"] > thr[channel][1]
+        ) & df.loc[:, "NREM"]
+        tmp_df.loc[:, "above_thr_3"] = (
+            tmp_df.loc[:, "spi_amp_smooth"] > thr[channel][2]
+        ) & df.loc[:, "NREM"]
+        tmp_df.loc[:, "group"] = (
+            tmp_df.loc[:, "above_thr_1"] != tmp_df.loc[:, "above_thr_1"].shift()
+        ).cumsum()
+        tmp_df.loc[~df.loc[:, "NREM"], "group"] = pd.NA
+
+        tmp_df.loc[:, "group"] = (
+            tmp_df.loc[:, "above_thr_1"] != tmp_df.loc[:, "above_thr_1"].shift()
+        ).cumsum()
+        tmp_df.loc[~df.loc[:, "NREM"], "group"] = pd.NA
 
         grouped = (
-            tmp_df[tmp_df["above_thr_1"]]
+            tmp_df.loc[tmp_df.loc[:, "above_thr_1"]]
             .groupby("group")
             .agg(
                 start=(
@@ -128,13 +139,13 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
         valid_groups_1 = grouped.index[
             (grouped["duration"] >= min_dur_1) & (grouped["duration"] <= max_dur_1)
         ]
-        tmp_df.loc[:, "valid_thr_1_span"] = tmp_df["group"].isin(valid_groups_1)
+        tmp_df.loc[:, "valid_thr_1_span"] = tmp_df.loc[:, "group"].isin(valid_groups_1)
         tmp_df.loc[:, "above_thr_2_group"] = (
-            tmp_df["above_thr_2"] != tmp_df["above_thr_2"].shift()
+            tmp_df.loc[:, "above_thr_2"] != tmp_df.loc[:, "above_thr_2"].shift()
         ).cumsum()
-        tmp_df.loc[~df["NREM"], "above_thr_2_group"] = pd.NA
+        tmp_df.loc[~df.loc[:, "NREM"], "above_thr_2_group"] = pd.NA
         thr_2_durations = (
-            tmp_df[tmp_df["above_thr_2"]]
+            tmp_df.loc[tmp_df.loc[:, "above_thr_2"]]
             .groupby("above_thr_2_group")["above_thr_2"]
             .apply(lambda x: x.index[-1] - x.index[0])
         )
@@ -142,15 +153,15 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
             (thr_2_durations >= min_dur_2) & (thr_2_durations <= max_dur_2)
         ]
         valid_groups_2 = tmp_df[
-            tmp_df["above_thr_2_group"].isin(valid_thr_2_groups)
-            & tmp_df["valid_thr_1_span"]
+            tmp_df.loc[:, "above_thr_2_group"].isin(valid_thr_2_groups)
+            & tmp_df.loc[:, "valid_thr_1_span"]
         ]["group"].unique()
         valid_groups_3 = grouped.index[
             grouped.index.isin(valid_groups_2)
-            & grouped.index.isin(tmp_df[tmp_df["above_thr_3"]]["group"])
+            & grouped.index.isin(tmp_df.loc[tmp_df.loc[:, "above_thr_3"], "group"])
         ]
         mask_edges = (
-            tmp_df[df["NREM"]]
+            tmp_df.loc[df.loc[:, "NREM"]]
             .groupby("mask_group")
             .agg(
                 mask_start=("spi_amp_smooth", lambda x: x.index[0]),
@@ -161,11 +172,20 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
         valid_groups_final = [
             g for g in valid_groups_3 if not touches_mask_edge(grouped, mask_edges, g)
         ]
-        tmp_df["valid_span"] = tmp_df["group"].isin(valid_groups_final)
+        tmp_df.loc[:, "valid_span"] = tmp_df.loc[:, "group"].isin(valid_groups_final)
         valid_spans[channel] = grouped.loc[valid_groups_final, ["start", "end"]]
-        valid_spans[channel]["duration"] = (
+        valid_spans[channel].loc[:, "duration"] = (
             valid_spans[channel]["end"] - valid_spans[channel]["start"]
         )
+        neg_peaks = []
+        for _, row in valid_spans[channel].iterrows():
+            seg = tmp_df.loc[row["start"] : row["end"]]
+            seg = seg[seg["above_thr_3"]]
+            if not seg.empty:
+                neg_peaks.append(seg.loc[:, "spi_amp_smooth"].idxmin())
+            else:
+                neg_peaks.append(pd.NaT)
+        valid_spans[channel]["neg_peak"] = neg_peaks
         # valid_spans[channel]["start_time"] = df.index.iloc[
         #     valid_spans[channel]["start"]
         # ].values
@@ -196,17 +216,22 @@ def run(manager, **params):
     del params["thr"]
     valid_spans, df = detect_spindles(df, thr, channels, **params)
     if params["save"]:
+        Path(manager.config["output_path"], "spindles").mkdir(
+            parents=True, exist_ok=True
+        )
         for ch in valid_spans.keys():
             if not valid_spans[ch].empty:
                 valid_spans[ch].to_csv(
                     Path(
                         manager.config["output_path"],
+                        "spindles",
                         f"spindle_events_ch-{int(ch):02d}_{manager.config.get("config_id")}.csv",
                     ),
                 )
         with open(
             Path(
                 manager.config["output_path"],
+                "spindles",
                 f"state_dict_{manager.config.get("config_id")}.json",
             ),
             "w",

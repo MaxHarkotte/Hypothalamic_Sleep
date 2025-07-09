@@ -10,16 +10,18 @@ from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
 
 
 def down_filt_rec(manager, rec, rec_dur, **params):
-    rec = spp.resample(rec, resample_rate=params["Fs"])
-    rec = rec.frame_slice(start_frame=0, end_frame=int(rec_dur * 3600 * params["Fs"]))
+    rec = spp.resample(rec, resample_rate=params["filter_Fs"])
+    rec = rec.frame_slice(
+        start_frame=0, end_frame=int(rec_dur * 3600 * params["filter_Fs"])
+    )
     valid_times = get_valid_times(rec)
-    filter_coeffs = get_filter_coeff(params["Fs"], params["filter_coeffs"])
+    filter_coeffs = get_filter_coeff(params["filter_Fs"], params["filter_edges"])
     filt_rec = filter_recording(
         manager,
         recording=None,
         filter_coeff=filter_coeffs,
         valid_times=valid_times,
-        target_fs=params["Fs"],
+        target_fs=params["filter_Fs"],
         **params,
     )
     # filt_rec = spp.bandpass_filter(
@@ -29,11 +31,18 @@ def down_filt_rec(manager, rec, rec_dur, **params):
     #     **{"filter_order": params["filter_order"]},
     # )
 
+    # phase_rec = filter_recording(
+    #     manager,
+    #     recording=filt_rec,
+    #     filter_coeff = get_filter_coeff(params["Fs"], [1.8, 2]),
+    #     valid_times=valid_times,
+    #     **params,
+    # )
     phase_rec = spp.bandpass_filter(
         filt_rec,
         freq_min=1.8,
         freq_max=2,
-        **{"filter_order": params["filter_order"]},
+        **{"filter_order": 6},
     )
     return filt_rec, phase_rec
 
@@ -338,7 +347,7 @@ def run(manager, **params):
     proc_so_df = process_zero_crosses(filt_rec, phase_rec, so_df.copy(), **params)
     # plot_crossings(manager=manager, rec=filt_rec, crossings=proc_so_df, **params)
     if params.get("save", False):
-        save_path = Path(manager.config.get("output_path"))
+        save_path = Path(manager.config.get("output_path"), "slow_osc")
         save_path.mkdir(parents=True, exist_ok=True)
         for ch in proc_so_df.index.get_level_values(0).unique():
             proc_so_df.loc[ch].to_csv(

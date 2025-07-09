@@ -2,9 +2,12 @@
 
 import numpy as np
 import pandas as pd
+import dask.array as da
 import spikeinterface.full as si
 import json
 from pathlib import Path
+
+import pdb
 
 source_to_func = {
     "neuralynx": si.read_neuralynx,
@@ -107,6 +110,8 @@ class NumpyEncoder(json.JSONEncoder):
             return float(obj)
         elif isinstance(obj, (np.ndarray,)):
             return obj.tolist()
+        elif isinstance(obj, (da.Array,)):
+            return obj.compute().tolist()
         return json.JSONEncoder.default(self, obj)
 
 
@@ -136,7 +141,7 @@ def try_convert_to_array(obj):
     """
     if isinstance(obj, list) and is_uniform_nested_list(obj):
         try:
-            return np.array(obj)
+            return np.array(obj).astype(np.int16)
         except Exception:
             return obj
     return obj
@@ -158,119 +163,180 @@ class NumpyDecoder(json.JSONDecoder):
             return value
 
 
+def check_rand_times(offsets, event_times, valid_times, rng):
+    tmp_times = event_times + offsets
+    valid_mask = np.any(
+        [(tmp_times >= start) & (tmp_times <= stop) for start, stop in valid_times.T],
+        axis=0,
+    )
+
+    # Replace invalid events with random valid ones
+    for i in np.where(~valid_mask)[0]:
+        while True:
+            val = rng.choice([-1, 1], size=1) * rng.uniform(low=2, high=7, size=1)
+            tmp_time = event_times[i] + val
+            if any(start <= tmp_time <= stop for start, stop in valid_times.T):
+                tmp_times[i] = tmp_time
+                break
+    new_offsets = tmp_times - event_times
+    return new_offsets
+
+
 def get_spans(manager, trigger, valid_spans=None, **params):
     """
     Must combine 'window' and 'window_shift' to center the event within
     the window for state-transition events.
     """
+
+    ## TODO: for "null" condition must check if in NREM
     if "spi" in trigger:
-        trigger = trigger.split("-")[1].lower()
-        assert trigger in ["center", "onset", "offset"]
+        event_trigger = trigger.split("-")[1].lower()
+        assert event_trigger in ["peak", "onset", "offset", "null"]
         if valid_spans is None:
             raise ValueError("valid_spans must be provided for spindle times.")
-        if trigger == "center":
+        if event_trigger == "peak":
             # TODO: should find closest time to this time in time vector
-            offsets = valid_spans.duration / 2
-        if trigger == "onset":
+            offsets = valid_spans.neg_peak - valid_spans.start
+        if event_trigger == "onset":
             offsets = np.zeros(len(valid_spans))
-        if trigger == "offset":
+        if event_trigger == "offset":
             offsets = valid_spans.duration
+        if event_trigger == "null":
+            rng = np.random.default_rng()
+            orig_offsets = valid_spans.neg_peak - valid_spans.start
+            offsets = rng.choice([-1, 1], size=orig_offsets.size) * rng.uniform(
+                low=(orig_offsets + 2), high=7, size=orig_offsets.size
+            )
+            offsets = check_rand_times(
+                offsets, valid_spans.start, manager.state_dict["NREM"]["times"], rng=rng
+            )
+
         chunks = [
             (
-                event.start + offset - params.get("window"),
+                event.start + offset - params.get("chunk_window"),
                 event.start
                 + offset
-                + params.get("window")
+                + params.get("chunk_window")
                 + params.get("spectra_window", 0),
             )
             for (_, event), offset in zip(valid_spans.iterrows(), offsets)
         ]
     elif "so" in trigger:
-        trigger = trigger.split("-")[1].lower()
-        assert trigger in ["peak", "down", "end"]
+        event_trigger = trigger.split("-")[1].lower()
+        assert event_trigger in ["peak", "down", "end", "null"]
         if valid_spans is None:
             raise ValueError("valid_spans must be provided for SO times.")
-        if trigger == "peak":
+        if event_trigger == "peak":
             offsets = valid_spans.neg_peak_time - valid_spans.down_crossing
-        if trigger == "down":
+        if event_trigger == "down":
             offsets = np.zeros(len(valid_spans))
-        if trigger == "end":
+        if event_trigger == "end":
             offsets = valid_spans.end_crossing - valid_spans.down_crossing
+        if event_trigger == "null":
+            rng = np.random.default_rng()
+            orig_offsets = valid_spans.neg_peak_time - valid_spans.down_crossing
+            offsets = rng.choice([-1, 1], size=orig_offsets.size) * rng.uniform(
+                low=(orig_offsets + 2), high=7, size=orig_offsets.size
+            )
+            offsets = check_rand_times(
+                offsets,
+                valid_spans.down_crossing,
+                manager.state_dict["NREM"]["times"],
+                rng=rng,
+            )
         chunks = [
             (
-                event.down_crossing + offset - params.get("window"),
+                event.down_crossing + offset - params.get("chunk_window"),
                 event.down_crossing
                 + offset
-                + params.get("window")
+                + params.get("chunk_window")
                 + params.get("spectra_window", 0),
             )
             for (_, event), offset in zip(valid_spans.iterrows(), offsets)
         ]
 
-    else:
-        state, trigger = trigger.split("-")
+    elif any(x in trigger for x in ["wake", "nrem", "rem"]):
+        state, event_trigger = trigger.split("-")
         state = state.upper()
-        trigger = trigger.lower()
+        event_trigger = event_trigger.lower()
         trig_dict = {"onset": 0, "offset": 1}
         assert state in ["WAKE", "NREM", "REM"]
-        if trigger == "onset":
+        if event_trigger == "all":
             good_inds = np.where(
                 (
                     manager.state_dict[state]["times"][1]
                     - manager.state_dict[state]["times"][0]
-                    + params.get("window_shift", 0)
                     + params.get("spectra_window", 0)
                 )
-                > params.get("window")
+                > params.get("chunk_window")
             )[0]
-        elif trigger == "offset":
+
+        elif event_trigger == "onset":
+            good_inds = np.where(
+                (
+                    manager.state_dict[state]["times"][1]
+                    - manager.state_dict[state]["times"][0]
+                    + params.get("spectra_window_shift", 0)
+                    + params.get("spectra_window", 0)
+                )
+                > params.get("chunk_window")
+            )[0]
+        elif event_trigger == "offset":
             good_inds = np.where(
                 (
                     (
                         manager.state_dict[state]["times"][0][1:]
                         - manager.state_dict[state]["times"][1][:-1]
-                        + params.get("window_shift", 0)
+                        + params.get("spectra_window_shift", 0)
                     )
-                    > params.get("window")
+                    > params.get("chunk_window")
                 )
                 & (
                     manager.state_dict[state]["times"][1]
                     - manager.state_dict[state]["times"][0]
-                    + params.get("window_shift", 0)
+                    + params.get("spectra_window_shift", 0)
                     + params.get("spectra_window", 0)
-                    > params.get("window")
+                    > params.get("chunk_window")
                 )
             )[0]
         else:
             raise ValueError(
-                f"Invalid trigger {trigger}. Must be one of ['onset', 'offset']."
+                f"Invalid trigger {event_trigger}. Must be one of ['all', 'onset', 'offset']."
             )
-        # good_inds = np.where(
-        #     manager.state_dict[state][trigger] - manager.state_dict[state][trigger]
-        #     > (params.get("window") * params.get("Fs"))
-        # )[0]
-        chunks = [
-            [
-                manager.state_dict[state]["times"][trig_dict[trigger]][i]
-                + params.get("window_shift", 0)
-                - params.get("window"),
-                manager.state_dict[state]["times"][trig_dict[trigger]][i]
-                + (
-                    params.get("window_shift", 0)
-                    + params.get("window")
-                    + params.get("spectra_window", 0)
-                ),
+        if event_trigger in trig_dict.keys():
+            chunks = [
+                [
+                    manager.state_dict[state]["times"][trig_dict[event_trigger]][i]
+                    + params.get("spectra_window_shift", 0)
+                    - params.get("chunk_window"),
+                    manager.state_dict[state]["times"][trig_dict[event_trigger]][i]
+                    + (
+                        params.get("spectra_window_shift", 0)
+                        + params.get("chunk_window")
+                        + params.get("spectra_window", 0)
+                    ),
+                ]
+                for i in good_inds
             ]
-            for i in good_inds
-        ]
+        elif event_trigger == "all":
+            chunks = []
+            for i in good_inds:
+                steps = np.arange(
+                    manager.state_dict[state]["times"][0][i],
+                    manager.state_dict[state]["times"][1][i],
+                    params.get("chunk_window") * 2,
+                )
+                chunks.extend(
+                    [[start, stop] for start, stop in zip(steps[:-1], steps[1:])]
+                )
     return chunks
 
 
 def load_spindles(manager, channel):
     # load spindles from file
     spindle_files = list(
-        Path(manager.config["output_path"]).glob(
-            f"spindle_events_ch-{str(channel)}_{manager.config.get("config_id")}.csv"
+        Path(manager.config["output_path"], "spindles").glob(
+            f"spindle_events_ch-{str(channel)}_*{manager.config.get("config_id")}.csv"
         )
     )
     if len(spindle_files) == 0:
@@ -284,8 +350,8 @@ def load_spindles(manager, channel):
 def load_SOs(manager, channel):
 
     so_files = list(
-        Path(manager.config["output_path"]).glob(
-            f"so-df_ch-{int(channel):02d}_{manager.config.get("config_id")}.csv"
+        Path(manager.config["output_path"], "slow_osc").glob(
+            f"so-df_ch-{int(channel):02d}_*{manager.config.get("config_id")}.csv"
         )
     )
     if len(so_files) == 0:
