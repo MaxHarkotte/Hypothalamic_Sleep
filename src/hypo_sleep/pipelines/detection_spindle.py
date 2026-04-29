@@ -9,7 +9,12 @@ from pathlib import Path
 import json
 import spikeinterface.preprocessing as spp
 from ..session_helper import NumpyEncoder
-from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
+from ..rec_utils import (
+    get_filter_coeff,
+    filter_recording,
+    get_valid_times,
+    resample_recording,
+)
 import warnings
 from pandas.errors import SettingWithCopyWarning
 
@@ -22,7 +27,8 @@ warnings.simplefilter(action="ignore", category=SettingWithCopyWarning)
 
 
 def down_filt_rec(manager, rec, rec_dur, **params):
-    rec = spp.resample(rec, resample_rate=params["Fs"])
+    rec = resample_recording(manager, rec, **params)
+    # rec = spp.resample(rec, resample_rate=params["Fs"])
     valid_times = get_valid_times(rec)
     filter_coeffs = get_filter_coeff(params["Fs"], params["filter_edges"])
     filt_rec = filter_recording(
@@ -182,7 +188,7 @@ def detect_spindles(df, thr, channels, verbose=False, **params):
             seg = tmp_df.loc[row["start"] : row["end"]]
             seg = seg[seg["above_thr_3"]]
             if not seg.empty:
-                neg_peaks.append(seg.loc[:, "spi_amp_smooth"].idxmin())
+                neg_peaks.append(seg.loc[:, "trace"].idxmin())
             else:
                 neg_peaks.append(pd.NaT)
         valid_spans[channel]["neg_peak"] = neg_peaks
@@ -216,23 +222,23 @@ def run(manager, **params):
     del params["thr"]
     valid_spans, df = detect_spindles(df, thr, channels, **params)
     if params["save"]:
-        Path(manager.config["output_path"], "spindles").mkdir(
-            parents=True, exist_ok=True
+        Path(manager.output_path, "spindles").mkdir(
+            parents=True, exist_ok=True, mode=0o777
         )
         for ch in valid_spans.keys():
             if not valid_spans[ch].empty:
                 valid_spans[ch].to_csv(
                     Path(
-                        manager.config["output_path"],
+                        manager.output_path,
                         "spindles",
-                        f"spindle_events_ch-{int(ch):02d}_{manager.config.get("config_id")}.csv",
+                        f"spindle_events_ch-{int(ch):02d}_{manager.config.get('config_id')}.csv",
                     ),
                 )
         with open(
             Path(
-                manager.config["output_path"],
+                manager.output_path,
                 "spindles",
-                f"state_dict_{manager.config.get("config_id")}.json",
+                f"state_dict_{manager.config.get('config_id')}.json",
             ),
             "w",
         ) as fp:

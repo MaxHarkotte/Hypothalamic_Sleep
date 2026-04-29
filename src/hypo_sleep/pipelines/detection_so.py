@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 from pathlib import Path
 import spikeinterface.preprocessing as spp
 from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
+from ..utils import logger
 
 
 def down_filt_rec(manager, rec, rec_dur, **params):
@@ -53,7 +54,7 @@ def detect_slow_oscs(manager, rec, debug=False, **params):
     for ch in rec.get_channel_ids():
         if ch not in params.get("channels"):
             continue
-        print(f"Processing channel {ch}")
+        logger.info(f"Processing channel {ch}")
         channel_crossings = {
             "down_crossing": [],
             "up_crossing": [],
@@ -64,7 +65,11 @@ def detect_slow_oscs(manager, rec, debug=False, **params):
             manager.state_dict["NREM"]["times"][0],
             manager.state_dict["NREM"]["times"][1],
         ):
-            tmp_rec = rec.channel_slice(channel_ids=[ch]).time_slice(
+            if onset <= rec.get_start_time():
+                onset = rec.get_start_time()
+            if offset >= rec.get_end_time():
+                offset = rec.get_end_time()
+            tmp_rec = rec.select_channels(channel_ids=[ch]).time_slice(
                 start_time=onset, end_time=offset
             )
             tmp_trace = tmp_rec.get_traces(return_scaled=True).flatten()
@@ -206,8 +211,8 @@ def plot_crossings(manager, rec, crossings, n_samples=10, pad=0.1, **params):
         fig.tight_layout()
         fig.savefig(
             Path(
-                manager.config["output_path"],
-                f"SO_0xing_{ch}_{manager.config["config_id"]}.png",
+                manager.output_path,
+                f"SO_0xing_{ch}_{manager.config['config_id']}.png",
             ),
             dpi=300,
             bbox_inches="tight",
@@ -347,13 +352,13 @@ def run(manager, **params):
     proc_so_df = process_zero_crosses(filt_rec, phase_rec, so_df.copy(), **params)
     # plot_crossings(manager=manager, rec=filt_rec, crossings=proc_so_df, **params)
     if params.get("save", False):
-        save_path = Path(manager.config.get("output_path"), "slow_osc")
-        save_path.mkdir(parents=True, exist_ok=True)
+        save_path = Path(manager.output_path, "slow_osc")
+        save_path.mkdir(parents=True, exist_ok=True, mode=0o777)
         for ch in proc_so_df.index.get_level_values(0).unique():
             proc_so_df.loc[ch].to_csv(
                 Path(
                     save_path,
-                    f"so-df_ch-{int(ch):02d}_{manager.config.get("config_id")}.csv",
+                    f"so-df_ch-{int(ch):02d}_{manager.config.get('config_id')}.csv",
                 ),
                 index=False,
                 header=True,

@@ -521,7 +521,7 @@ def overlap_spectra(spectra, time_arr, inds_group, window=10):
 
 def get_state_rec_slice(state_dict, parent_rec, channels=None, state="NREM"):
     if channels is not None:
-        parent_rec.channel_slice(channel_ids=channels)
+        parent_rec.select_channels(channel_ids=channels)
     tmp_recs = []
     for start, stop in zip(state_dict[state]["onset"], state_dict[state]["offset"]):
         tmp_recs.append(parent_rec.frame_slice(start_frame=start, end_frame=stop))

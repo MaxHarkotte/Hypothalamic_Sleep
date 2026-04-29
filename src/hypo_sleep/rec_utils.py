@@ -14,6 +14,7 @@ import spikeinterface.preprocessing as spp
 import spikeinterface.extractors as se
 import probeinterface as pi
 import ghostipy as gsp
+from hypo_sleep.utils import logger
 
 
 def load_rec(
@@ -37,12 +38,12 @@ def load_rec(
     if ret_lfp:
         chs = recording.get_channel_ids()
         lfp_chs = [ch for ch in chs if int(ch) < 32]
-        recording = recording.channel_slice(channel_ids=lfp_chs)
+        recording = recording.select_channels(channel_ids=lfp_chs)
     if ret_eeg:
         if eeg_chs is None:
             chs = recording.get_channel_ids()
             eeg_chs = [ch for ch in chs if int(ch) >= 32]
-            recording = recording.channel_slice(channel_ids=eeg_chs)
+            recording = recording.select_channels(channel_ids=eeg_chs)
     if probe is not None:
         recording.set_probe(probe=probe, in_place=True)
         # recording.set_channel_groups(
@@ -54,7 +55,7 @@ def load_rec(
         elif isinstance(channels, List):
             if any(channel not in recording.get_channel_ids() for channel in channels):
                 raise ValueError(f">= 1 channel of {channels} not found in recording.")
-            recording = recording.channel_slice(channel_ids=channels)
+            recording = recording.select_channels(channel_ids=channels)
     return recording
 
 
@@ -141,8 +142,8 @@ def filter_recording(
     params.update(manager.param_sets["filter"][params.get("filter_id")])
     assert (
         params["filter_Fs"] == params["reference_Fs"]
-    ), f'`filter_Fs` {params["filter_Fs"]} != `reference_Fs` {params["reference_Fs"]}'
-    param_id = f"{params["reference_id"]}_{params['filter_id']}"
+    ), f"`filter_Fs` {params['filter_Fs']} != `reference_Fs` {params['reference_Fs']}"
+    param_id = f"{params['reference_id']}_{params['filter_id']}"
     if target_fs is None:
         target_fs = params["filter_Fs"]
     if threads is None:
@@ -154,7 +155,7 @@ def filter_recording(
         region=region,
     )
     if rec is not None:
-        print("Filtered recording already exists. Loading...")
+        logger.info("Filtered recording already exists. Loading...")
         if channels is not None:
             tmp_chs = rec.get_channel_ids()
             if any(ch not in tmp_chs for ch in channels):
@@ -163,7 +164,7 @@ def filter_recording(
                 )
         return rec
     else:
-        print("Filtered recording does not exist. Filtering...")
+        logger.info("Filtered recording does not exist. Filtering...")
     if recording is None:
         if params.get("reference_method") is not None:
             recording = load_rec_from_disk(
@@ -184,6 +185,8 @@ def filter_recording(
     elecs = [i for i, ch in enumerate(channels)]
     timestamps = recording.get_times()
     n_samples = recording.get_num_samples()
+    if params.get("filter_notch", False):
+        recording = spp.notch_filter(recording, freq=50)
     ram_capacity = psutil.virtual_memory().available / (1024**3) * 0.9
     rec_disk_mem = recording.get_memory_size() / (1024**3)
     if len(channels) > 2:
@@ -204,7 +207,7 @@ def filter_recording(
                 ).flatten()
     else:
         if verbose:
-            print(f"Loading all channels {channels} into memory.")
+            logger.info(f"Loading all channels {channels} into memory.")
         data_on_disk = recording.get_traces(channel_ids=channels)
     n_dim = len(data_on_disk.shape)
     input_dim_restrictions = [None] * n_dim
@@ -216,7 +219,7 @@ def filter_recording(
     filter_delay = (len(filter_coeff) - 1) // 2
     if rec_disk_mem < ram_capacity:
         if verbose:
-            print("getting filter shape")
+            logger.info("getting filter shape")
         for start, stop in valid_times:
             frm, to = time_bound_check(start, stop, timestamps, n_samples)
             if np.isclose(frm, to, rtol=0, atol=1e-8):
@@ -241,7 +244,7 @@ def filter_recording(
         ts_offset = 0
         for i, (start, stop) in enumerate(indices):
             if verbose:
-                print("filtering in memory")
+                logger.info("filtering in memory")
             extracted_ts = timestamps[start:stop:decimation]
             new_timestamps[ts_offset : ts_offset + len(extracted_ts)] = extracted_ts
             ts_offset += len(extracted_ts)
@@ -265,7 +268,7 @@ def filter_recording(
         sampling_frequency=target_fs,
         channel_ids=channels,
     )
-    sub_rec = recording.channel_slice(channel_ids=channels)
+    sub_rec = recording.select_channels(channel_ids=channels)
     # filtered_rec._annotations.update({"is_filtered": True})
     filtered_rec.set_times(new_timestamps)
     filtered_rec.set_channel_offsets(sub_rec.get_channel_offsets())
@@ -292,7 +295,7 @@ def resample_recording(manager, recording=None, resample_Fs=250, **params):
         region=params["region"],
     )
     if rec is not None:
-        print("Filtered recording already exists. Loading...")
+        logger.info("Filtered recording already exists. Loading...")
         return rec
     # if recording is None, load the raw recording
     if recording is None:
@@ -304,19 +307,19 @@ def resample_recording(manager, recording=None, resample_Fs=250, **params):
             times = rec.get_times()
             traces = rec.get_traces()
         except np.core._exceptions._ArrayMemoryError as e:
-            print(
+            logger.info(
                 f"Resampling failed due to memory error: {e}. "
                 "Consider using a smaller resample rate or increasing your system's memory."
             )
     else:
-        ch_rec = recording.channel_slice(channel_ids=[recording.get_channel_ids()[0]])
+        ch_rec = recording.select_channels(channel_ids=[recording.get_channel_ids()[0]])
         tmp_rec = spp.resample(ch_rec, resample_rate=resample_rate)
         traces = np.zeros(
             (tmp_rec.get_num_samples(), recording.get_num_channels()),
             dtype=recording.get_dtype(),
         )
         for i, ch in tqdm(enumerate(recording.get_channel_ids()), desc="Resampling"):
-            ch_rec = recording.channel_slice(channel_ids=[ch])
+            ch_rec = recording.select_channels(channel_ids=[ch])
             tmp_rec = spp.resample(ch_rec, resample_rate=resample_rate)
             traces[:, i] = tmp_rec.get_traces().flatten()
             if i == 0:
@@ -356,6 +359,8 @@ def reference_recording(manager, recording=None, save=True, **params):
         raw_rec = load_rec_from_disk(
             manager, region=params["region"], param_id=params.get("resample_id", "")
         )
+    if params["reference_method"].lower() == "none":
+        recording = raw_rec
     if params["reference_method"] == "global":
         recording = si.preprocessing.common_reference(
             raw_rec,
@@ -398,28 +403,32 @@ def save_rec(
     },
 ):
     save_folder = Path(
-        Path(manager.config.get("output_path")).parent, "rec", region, param_id
+        manager.base_path,
+        Path(manager.output_path).parent,
+        "rec",
+        region,
+        param_id,
     )
     # save_folder = Path(manager.config.get("output_path"), "rec", region, rec_type)
     if not save_folder.parent.parent.exists():
-        save_folder.parent.parent.mkdir(exist_ok=True)
+        save_folder.parent.parent.mkdir(exist_ok=True, mode=0o777)
     if not save_folder.parent.exists():
-        save_folder.parent.mkdir(exist_ok=True)
-    print(f"saving recording to: \n{save_folder.as_posix()}")
+        save_folder.parent.mkdir(exist_ok=True, mode=0o777)
+    logger.info(f"saving recording to: \n{save_folder.as_posix()}")
     recording.save(folder=save_folder, format="binary", **job_kwargs)
 
 
 def load_rec_from_disk(manager, param_id, region):
-    rec_path = Path(Path(manager.config.get("output_path")).parent, "rec", region)
+    rec_path = Path(manager.base_path, Path(manager.output_path).parent, "rec", region)
 
     if not rec_path.exists():
-        print(f"Recording path {rec_path} does not exist.")
+        logger.info(f"Recording path {rec_path} does not exist.")
         return None
     exact_match = Path(rec_path, param_id)
     if not exact_match.exists():
         potential_rec_dirs = list(rec_path.glob(param_id))
         if len(potential_rec_dirs) != 1:
-            print(
+            logger.info(
                 f"param_id: {param_id} is not specific enough."
                 f"{potential_rec_dirs} found\nreturning None"
             )
@@ -427,7 +436,7 @@ def load_rec_from_disk(manager, param_id, region):
         rec_path = potential_rec_dirs[0]
     else:
         rec_path = exact_match
-    print(f"loading recording from disk.. {rec_path.name}")
+    logger.info(f"loading recording from disk.. {rec_path.name}")
     recording = si.load(rec_path)
     return recording
 
@@ -438,7 +447,7 @@ def timing(f):
         ts = time()
         result = f(*args, **kw)
         te = time()
-        print(f"func:{repr(f.__name__)} took: {te-ts:2.4f} s")
+        logger.info(f"func:{repr(f.__name__)} took: {te-ts:2.2f} s")
         return result
 
     return wrap

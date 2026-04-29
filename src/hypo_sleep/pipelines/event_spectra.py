@@ -7,12 +7,13 @@ from spectral_connectivity import Connectivity, Multitaper
 import spikeinterface as si
 import spikeinterface.preprocessing as spp
 from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
+from ..utils import logger
 
 
 def load_spindles(manager, channel):
     # load spindles from file
     spindle_files = list(
-        Path(manager.config["output_path"]).glob(
+        Path(manager.output_path).glob(
             f"spindle_events_ch-{str(channel)}_{manager.config.get("config_id")}.csv"
         )
     )
@@ -27,7 +28,7 @@ def load_spindles(manager, channel):
 def load_SOs(manager, channel):
 
     so_files = list(
-        Path(manager.config["output_path"]).glob(
+        Path(manager.output_path).glob(
             f"so-df_ch-{int(channel):02d}_{manager.config.get("config_id")}.csv"
         )
     )
@@ -199,7 +200,7 @@ def get_spectra(rec, chunks, channels=None, **params):
     expectation_type = "time_trials_tapers" if params["PSD"] else "trials_tapers"
     for ch in rec.get_channel_ids():
         if str(ch) in channels:
-            print(f"Processing channel {ch}")
+            logger.info(f"Processing channel {ch}")
             ch_spectrum = []
             for start, stop in chunks:
                 tmp_rec = rec.frame_slice(
@@ -270,7 +271,7 @@ def run(manager, **params):
         for ch in spectra.keys():
             np.savez(
                 Path(
-                    manager.config["output_path"],
+                    manager.output_path,
                     (
                         f"spectra_{trigger}_ch-{int(ch):02d}"
                         f"_{manager.config.get('config_id')}.npz"

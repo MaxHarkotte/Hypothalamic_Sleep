@@ -1,9 +1,10 @@
-name: hypo-sleep-no-si
+name: hypo-sleep
 channels:
 - defaults
 - conda-forge
+- edeno
 dependencies:
-- "python>=3.10,<3.13"
+- "python>=3.11,<3.13"
 - pip
 - bottleneck
 - numpy
@@ -13,6 +14,10 @@ dependencies:
 - scikit-image
 - matplotlib
 - xarray
+- netCDF4
+- h5netcdf
+- cftime
+- cupy
 - pandas
 - dask
 - tqdm
@@ -24,6 +29,10 @@ dependencies:
 - autopep8
 - mat73
 - black
+- spectral_connectivity
+- pyrasa
+- neurodsp
+- nitime
 - pip:
   - "black[jupyter]"
   # - spikeinterface>=0.99.1,<0.100

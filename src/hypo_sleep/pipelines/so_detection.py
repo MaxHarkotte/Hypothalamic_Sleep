@@ -202,7 +202,7 @@ def plot_crossings(manager, rec, crossings, n_samples=10, pad=0.1, **params):
         fig.tight_layout()
         fig.savefig(
             Path(
-                manager.config["output_path"],
+                manager.output_path,
                 f"SO_0xing_{ch}_{manager.config["config_id"]}.png",
             ),
             dpi=300,
@@ -346,7 +346,7 @@ def run(manager, **params):
     proc_so_df = process_zero_crosses(filt_rec, phase_rec, so_df.copy(), **params)
     # plot_crossings(manager=manager, rec=filt_rec, crossings=proc_so_df, **params)
     if params.get("save", False):
-        save_path = Path(manager.config.get("output_path"), "SO")
+        save_path = Path(manager.output_path, "SO")
         save_path.mkdir(parents=True, exist_ok=True)
         proc_so_df.to_csv(
             Path(save_path, f"so-df_{manager.config.get("config_id")}.csv"),

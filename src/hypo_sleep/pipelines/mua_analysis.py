@@ -15,7 +15,7 @@ from hypo_sleep.utils import get_span_start_stop, get_total_seconds
 default_params = {
     "resample_rate": "5ms",
     "Fs": 32_000,
-    "span_gap_nsamp": 2,
+    "span_gap_nsamp": 10,
     "min_good_span_len": 90,
     "save_xr": True,
 }
@@ -46,7 +46,7 @@ def run(
         load_path = Path(data_path, animal, date, config_id, "mua")
         [raw_mua_path] = list(load_path.glob(f"*raw_mua_times_{trigger}*.npz"))
         [chunk_time_path] = list(load_path.glob(f"*mua_chunks_{trigger}*.npz"))
-        [time_vec_path] = list(load_path.glob(f"*time_data_*{trigger}*.npz"))
+        [time_vec_path] = list(load_path.glob(f"mua_time_data_{trigger}*.npz"))
         with np.load(chunk_time_path, allow_pickle=True) as data:
             chunk_times = data["chunks"]
         with np.load(raw_mua_path, allow_pickle=True) as data:
@@ -127,7 +127,7 @@ def run(
             f"resampled_{params['resample_rate']}_{trigger}_{animal}_{date}_{config_id}",
         )
         if not resamp_save_path.exists():
-            resamp_save_path.mkdir()
+            resamp_save_path.mkdir(mode=0o777)
             for ind, seg in enumerate(resamp_seg):
                 seg.to_netcdf(
                     Path(resamp_save_path, f"{ind:02d}.nc"), engine="h5netcdf"
@@ -149,7 +149,7 @@ def run(
         freq_list = np.stack(freq_list, axis=0)
         if save:
             save_path = Path(output_path, "results")
-            save_path.mkdir(exist_ok=True)
+            save_path.mkdir(exist_ok=True, mode=0o777)
             np.savez(
                 Path(
                     save_path,

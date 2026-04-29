@@ -1,10 +1,13 @@
+import os
 import time
 import numpy as np
 import json
 from pathlib import Path
 import gc
 import pdb
+import logging
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
+from hypo_sleep.utils import logger, init_logger
 from hypo_sleep.session_manager import Session
 from hypo_sleep.pipelines import (
     detection_spindle,
@@ -14,6 +17,7 @@ from hypo_sleep.pipelines import (
     spectra_event,
     infraslow_power,
     plot_infraslow_power,
+    sorting,
 )
 from hypo_sleep.rec_utils import (
     resample_recording,
@@ -73,9 +77,11 @@ class PipelineManager(Session):
             # params.update(self.param_sets[pip_type].get(params.get(f"{pip_type}_id")))
             results[name] = self.add_pipeline(name, **params)
             gc.collect()
-            print(f"Pipeline {name} run time: {time.time() - pip_time:.2f} seconds")
+            logger.info(
+                f"Pipeline {name} run time: {time.time() - pip_time:.2f} seconds"
+            )
         end = time.time()
-        print(f"Total run time: {end - start:.2f} seconds")
+        logger.info(f"Total run time: {end - start:.2f} seconds")
         return results
 
     def save(self):
@@ -127,6 +133,13 @@ def create_parser():
         type=str,
         help="save all results to json file, default False",
     )
+    parser.add_argument(
+        "--log",
+        "-l",
+        default=f"{os.environ.get('WORK')}/logs/",
+        type=str,
+        help="log file path, default False",
+    )
     return parser
 
 
@@ -141,6 +154,9 @@ def main():
     path = Path(args.path)
     animal_id = args.animal
     date = args.date
+    init_logger(
+        animal=animal_id, date=date, config_id=args.config_id, log_path=Path(args.log)
+    )
     if not Path(path, animal_id, date).exists():
         raise ValueError(f"{Path(path, animal_id, date).as_posix()} does not exist")
     pipeline = PipelineManager(
@@ -149,7 +165,6 @@ def main():
         date=date,
         config_id=args.config_id,
     )
-    # "cfc3"
 
     results = pipeline.run()
     if save:

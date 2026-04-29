@@ -12,3 +12,5 @@ from .pipelines import (
     plot_infraslow_power,
     spectra_event,
 )
+
+from .session_helper import NumpyEncoder, NumpyDecoder

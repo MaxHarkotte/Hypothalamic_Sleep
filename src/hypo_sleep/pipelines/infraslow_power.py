@@ -14,6 +14,7 @@ import warnings
 import spikeinterface.preprocessing as spp
 import ghostipy as gsp
 from ..rec_utils import get_filter_coeff, filter_recording, get_valid_times
+from ..utils import logger
 from ..session_helper import NumpyEncoder
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -49,7 +50,7 @@ def make_envelope_df(state_dict, rec, **params):
     )
     df = pd.DataFrame(index=rec.get_times(), columns=columns)
     for ch in df.columns.get_level_values(0).unique():
-        ch_rec = rec.channel_slice(channel_ids=[ch])
+        ch_rec = rec.select_channels(channel_ids=[ch])
         df.loc[:, (ch, "filt1")] = ch_rec.get_traces(return_scaled=True).flatten()
         df.loc[:, (ch, "mask")] = np.full(
             shape=len(df.loc[:, (ch, "filt1")]), fill_value=False, dtype=bool
@@ -67,7 +68,7 @@ def make_envelope_df(state_dict, rec, **params):
 def extract_envelope(filt_rec, df, **params):
     channels = params.get("channels", filt_rec.get_channel_ids())
     for i, ch in enumerate(channels):
-        ch_rec = filt_rec.channel_slice(channel_ids=[ch])
+        ch_rec = filt_rec.select_channels(channel_ids=[ch])
         tmp_trace = ch_rec.get_traces(return_scaled=True).flatten()
         df.loc[:, (ch, "envelope1")] = np.abs(signal.hilbert(tmp_trace))
     return df
@@ -172,7 +173,7 @@ def extract_power(state_dict, df, **params):
             )
         psd_dict[ch]["freq"] = np.asarray(psd_dict[ch]["freq"])
         psd_dict[ch]["pow"] = np.asarray(psd_dict[ch]["pow"])
-    print(f"time to extract_power {time.time() - start_time:.2f} seconds")
+    logger.info(f"time to extract_power {time.time() - start_time:.2f} seconds")
     return psd_dict
 
 
@@ -192,7 +193,7 @@ def autocorr_sig(df, **params):
         )
         tasks.extend([(name, span, filt_env.copy(), lags) for span in spans])
         # process_span_partial = partial(name=name, span=process_span, filt_env=filt_env.copy(), lags=lags)
-        print(f"{len(spans)} spans found for ch: {name}")
+        logger.info(f"{len(spans)} spans found for ch: {name}")
     with Pool(processes=os.cpu_count()) as pool:
         # results = pool.map(process_span_partial, spans)
         results = list(
@@ -210,7 +211,7 @@ def autocorr_sig(df, **params):
     #     tmp = filt_env.loc[start:end].to_numpy()
     #
     #     acorr[name].append(autocorr(tmp, lags))
-    print(f"time to autocorr_sig {time.time() - start_time:.2f} seconds")
+    logger.info(f"time to autocorr_sig {time.time() - start_time:.2f} seconds")
     return acorr
 
 
@@ -231,7 +232,7 @@ def run(manager, **params):
         rec = manager.ctx_rec
     if params.get("region").lower() == "hyp":
         rec = manager.hyp_rec
-    rec = rec.channel_slice(channel_ids=params.get("channels"))
+    rec = rec.select_channels(channel_ids=params.get("channels"))
     rec_duration = manager.config["data"].get("rec_duration", None)
     filt_rec, _ = down_filt_ref_rec(manager, rec, rec_dur=rec_duration, **params)
     df = make_envelope_df(manager.state_dict, filt_rec, **params)
@@ -244,7 +245,7 @@ def run(manager, **params):
             tmp_df = filt_df.loc[:, ch].reset_index(names="time")
             tmp_df.to_csv(
                 Path(
-                    manager.config["output_path"],
+                    manager.output_path,
                     (
                         f"infraslow-df_ch-{int(ch):02d}_"
                         f"{manager.config.get("config_id")}.csv"
@@ -253,7 +254,7 @@ def run(manager, **params):
             )
             np.savez(
                 Path(
-                    manager.config["output_path"],
+                    manager.output_path,
                     (
                         f"infraslow-psd_ch-{int(ch):02d}_"
                         f"{manager.config.get('config_id')}.npz"
@@ -264,7 +265,7 @@ def run(manager, **params):
             )
         with open(
             Path(
-                manager.config["output_path"],
+                manager.output_path,
                 f"infraslow-acorr_{params['region']}_{manager.config.get('config_id')}.json",
             ),
             "w",

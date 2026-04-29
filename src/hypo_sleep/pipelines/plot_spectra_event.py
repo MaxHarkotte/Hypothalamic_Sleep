@@ -28,7 +28,7 @@ def load_spectra(manager, **params):
 
     spectra_files = list(
         Path(
-            manager.config["output_path"],
+            manager.output_path,
             "spectra",
             # trigger_dir_dict[trigger.split("-")[0].lower()],
         ).glob(
@@ -71,7 +71,7 @@ def plot_psd(
     **params,
 ):
     if params["trigger"].split("-")[0] in ["spi", "so"]:
-        trigger_ch = params[f"{params["trigger"].split("-")[0]}_ch"]
+        trigger_ch = params[f"{params['trigger'].split('-')[0]}_ch"]
     else:
         trigger_ch = ""
     if channels is None:
@@ -99,10 +99,10 @@ def plot_psd(
         ax.plot(tmp_freqs, dB_spectra, label=f"{ch}", lw=2)
         if params["plot_params"].get("single", False):
             ax.set_title(
-                f"{params["trigger"]}\nHypo Channel {ch}\n"
-                f"{manager.config.get("animal_id")} - "
-                f"{manager.config.get("date")} - "
-                f"{manager.config.get("config_id")}"
+                f"{params['trigger']}\nHypo Channel {ch}\n"
+                f"{manager.config.get('animal_id')} - "
+                f"{manager.config.get('date')} - "
+                f"{manager.config.get('config_id')}"
             )
             ax.set_ylabel("Power")
             ax.set_xlabel("Frequency (Hz)")
@@ -111,7 +111,7 @@ def plot_psd(
             fig.savefig(
                 Path(
                     plot_path,
-                    f"{params.get("trigger")}_PSD_{int(ch):02d}.png",
+                    f"{params.get('trigger')}_PSD_{int(ch):02d}.png",
                 ),
                 dpi=400,
                 facecolor="w",
@@ -119,11 +119,11 @@ def plot_psd(
             )
             plt.close(fig)
     ax.set_title(
-        f"Average PSD across {' '.join(params.get("trigger").split('-'))}-"
+        f"Average PSD across {' '.join(params.get('trigger').split('-'))}-"
         f"triggered events\nAll {params['region']} channels\n"
-        f"{manager.config.get("animal_id")} - "
-        f"{manager.config.get("date")} - "
-        f"{manager.config.get("config_id")}"
+        f"{manager.config.get('animal_id')} - "
+        f"{manager.config.get('date')} - "
+        f"{manager.config.get('config_id')}"
     )
     ax.set_ylabel("Power [dB]")
     ax.set_xlabel("Frequency (Hz)")
@@ -153,7 +153,7 @@ def plot_spectra(
     **params,
 ):
     if params["trigger"].split("-")[0] in ["spi", "so"]:
-        trigger_ch = f"_{int(params[f"{params["trigger"].split("-")[0]}_ch"]):02d}"
+        trigger_ch = f"_{int(params[f'{params['trigger'].split('-')[0]}_ch']):02d}"
     else:
         trigger_ch = ""
     freq_lims = params.get("freq_lims", (0, 45))
@@ -210,10 +210,10 @@ def plot_spectra(
                     vmax=vmax,
                 )
                 ax.set_title(
-                    f"{params["trigger"]} Spectrogram\nChannel {int(ch):02d} - Span {itr:02d}\n"
-                    f"{manager.config.get("animal_id")} - "
-                    f"{manager.config.get("date")} - "
-                    f"{manager.config.get("config_id")}"
+                    f"{params['trigger']} Spectrogram\nChannel {int(ch):02d} - Span {itr:02d}\n"
+                    f"{manager.config.get('animal_id')} - "
+                    f"{manager.config.get('date')} - "
+                    f"{manager.config.get('config_id')}"
                 )
                 # ax.set_xlim(
                 #     [
@@ -221,7 +221,7 @@ def plot_spectra(
                 #         np.round(time_arr[: shape[1]][-1] - time_arr[0] - window, 1) - 5,
                 #     ]
                 # )
-                xlabel = f"Time from {" ".join(params["trigger"].split("-"))} (s)"
+                xlabel = f"Time from {" ".join(params['trigger'].split('-'))} (s)"
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel("Frequency (Hz)")
                 ax.set_ylim(freq_lims)
@@ -233,7 +233,7 @@ def plot_spectra(
                         save_path,
                         (
                             f"trig_{trigger_ch}_"
-                            f"{params["trigger"]}_spectra_"
+                            f"{params['trigger']}_spectra_"
                             f"{plot_method}_"
                             f"{int(ch):02d}-itr{itr:02d}.png"
                         ),
@@ -288,10 +288,10 @@ def plot_spectra(
                 vmax=vmax,
             )
             ax.set_title(
-                f"{params["trigger"]} Spectrogram\nChannel {int(ch):02d} - {plot_method}\n"
-                f"{manager.config.get("animal_id")} - "
-                f"{manager.config.get("date")} - "
-                f"{manager.config.get("config_id")}"
+                f"{params['trigger']} Spectrogram\nChannel {int(ch):02d} - {plot_method}\n"
+                f"{manager.config.get('animal_id')} - "
+                f"{manager.config.get('date')} - "
+                f"{manager.config.get('config_id')}"
             )
             # ax.set_xlim(
             #     [
@@ -299,7 +299,7 @@ def plot_spectra(
             #         np.round(time_arr[: shape[1]][-1] - time_arr[0] - window, 1) - 5,
             #     ]
             # )
-            xlabel = f"Time from {" ".join(params["trigger"].split("-"))} (s)"
+            xlabel = f"Time from {" ".join(params['trigger'].split('-'))} (s)"
             ax.set_xlabel(xlabel)
             ax.set_ylabel("Frequency (Hz)")
             ax.set_ylim(freq_lims)
@@ -311,7 +311,7 @@ def plot_spectra(
                     save_path,
                     (
                         f"trig{trigger_ch}"
-                        f"_{params["trigger"]}_spectra_"
+                        f"_{params['trigger']}_spectra_"
                         f"{plot_method}_"
                         f"{int(ch):02d}.png"
                     ),
@@ -326,7 +326,7 @@ def plot_spectra(
 
 def run(manager, **params):
     data_dict = load_spectra(manager, **params)
-    plot_path = Path(manager.config.get("output_path"), "plots")
+    plot_path = Path(manager.output_path, "plots")
     if not plot_path.exists():
         plot_path.mkdir(parents=True)
     if params.get("PSD", False):

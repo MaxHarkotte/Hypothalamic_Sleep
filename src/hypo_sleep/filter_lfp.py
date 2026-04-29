@@ -26,7 +26,7 @@ def load_rec(recording_path, concatenate=True, channels=None):
         elif isinstance(channels, List):
             if any(channel not in recording.get_channel_ids() for channel in channels):
                 raise ValueError(f">= 1 channel of {channels} not found in recording.")
-            recording = recording.channel_slice(channel_ids=channels)
+            recording = recording.select_channels(channel_ids=channels)
     return recording
 
 

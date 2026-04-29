@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+from copy import deepcopy
 import dask.array as da
 import spikeinterface.full as si
 import json
@@ -75,11 +76,13 @@ def make_state_dict(scoring, config, n_samples, timestamps):
         state_dict["WAKE"]["offset"] = np.concatenate(
             (state_dict["WAKE"]["offset"], [n_samples - 1])
         )
+
     for key, val in state_dict.items():
+        min_size = min(val["offset"].size, val["onset"].size)
         val["times"] = np.array(
             (
-                timestamps[val["onset"].astype(int)],
-                timestamps[val["offset"].astype(int)],
+                timestamps[val["onset"][:min_size].astype(int)],
+                timestamps[val["offset"][:min_size].astype(int)],
             )
         )
     return state_dict
@@ -213,11 +216,14 @@ def get_spans(manager, trigger, valid_spans=None, **params):
 
         chunks = [
             (
-                event.start + offset - params.get("chunk_window"),
+                event.start
+                + offset
+                - params.get("chunk_window")
+                - (params.get("spectra_window", 0) / 2),
                 event.start
                 + offset
                 + params.get("chunk_window")
-                + params.get("spectra_window", 0),
+                + (params.get("spectra_window", 0) / 2),
             )
             for (_, event), offset in zip(valid_spans.iterrows(), offsets)
         ]
@@ -246,11 +252,14 @@ def get_spans(manager, trigger, valid_spans=None, **params):
             )
         chunks = [
             (
-                event.down_crossing + offset - params.get("chunk_window"),
+                event.down_crossing
+                + offset
+                - params.get("chunk_window")
+                - (params.get("spectra_window", 0) / 2),
                 event.down_crossing
                 + offset
                 + params.get("chunk_window")
-                + params.get("spectra_window", 0),
+                + (params.get("spectra_window", 0) / 2),
             )
             for (_, event), offset in zip(valid_spans.iterrows(), offsets)
         ]
@@ -299,6 +308,20 @@ def get_spans(manager, trigger, valid_spans=None, **params):
                     > params.get("chunk_window")
                 )
             )[0]
+        elif event_trigger == "null":
+            good_inds = np.where(
+                (valid_spans.end - valid_spans.start) > params.get("chunk_window")
+            )
+            good_spans = valid_spans.iloc[good_inds]
+            _, chunks = sample_time_points(
+                good_spans.to_numpy(),
+                offset=params.get("chunk_window"),
+                N=3_000,
+                win_ext=params.get("spectra_window"),
+                seed=params.get("random_seed", 522),
+            )
+            chunks = np.array(chunks)
+            return chunks
         else:
             raise ValueError(
                 f"Invalid trigger {event_trigger}. Must be one of ['all', 'onset', 'offset']."
@@ -308,12 +331,13 @@ def get_spans(manager, trigger, valid_spans=None, **params):
                 [
                     manager.state_dict[state]["times"][trig_dict[event_trigger]][i]
                     + params.get("spectra_window_shift", 0)
-                    - params.get("chunk_window"),
+                    - params.get("chunk_window")
+                    - (params.get("spectra_window", 0) // 2),
                     manager.state_dict[state]["times"][trig_dict[event_trigger]][i]
                     + (
                         params.get("spectra_window_shift", 0)
                         + params.get("chunk_window")
-                        + params.get("spectra_window", 0)
+                        + (params.get("spectra_window", 0) // 2)
                     ),
                 ]
                 for i in good_inds
@@ -322,8 +346,10 @@ def get_spans(manager, trigger, valid_spans=None, **params):
             chunks = []
             for i in good_inds:
                 steps = np.arange(
-                    manager.state_dict[state]["times"][0][i],
-                    manager.state_dict[state]["times"][1][i],
+                    manager.state_dict[state]["times"][0][i]
+                    - (params.get("spectra_window") / 2),
+                    manager.state_dict[state]["times"][1][i]
+                    + (params.get("spectra_window") / 2),
                     params.get("chunk_window") * 2,
                 )
                 chunks.extend(
@@ -335,8 +361,8 @@ def get_spans(manager, trigger, valid_spans=None, **params):
 def load_spindles(manager, channel):
     # load spindles from file
     spindle_files = list(
-        Path(manager.config["output_path"], "spindles").glob(
-            f"spindle_events_ch-{str(channel)}_*{manager.config.get("config_id")}.csv"
+        Path(manager.output_path, "spindles").glob(
+            f"spindle_events_ch-{str(channel)}_*{manager.config.get('config_id')}.csv"
         )
     )
     if len(spindle_files) == 0:
@@ -350,8 +376,8 @@ def load_spindles(manager, channel):
 def load_SOs(manager, channel):
 
     so_files = list(
-        Path(manager.config["output_path"], "slow_osc").glob(
-            f"so-df_ch-{int(channel):02d}_*{manager.config.get("config_id")}.csv"
+        Path(manager.output_path, "slow_osc").glob(
+            f"so-df_ch-{int(channel):02d}_*{manager.config.get('config_id')}.csv"
         )
     )
     if len(so_files) == 0:
@@ -369,6 +395,104 @@ def load_SOs(manager, channel):
             "end_crossing",
         ],
     ]
+
+
+def merge_intervals(intervals):
+    if not intervals:
+        return []
+    intervals = deepcopy(intervals)
+    merged = [intervals[0]]
+    for i in range(1, len(intervals)):
+        if merged[-1][1] == intervals[i][0]:
+            merged[-1][1] = intervals[i][1]
+        else:
+            merged.append(intervals[i])
+    return merged
+
+
+def union_intervals(intervals1, intervals2):
+    combined_intervals = sorted(
+        np.vstack((intervals1, intervals2)).tolist(), key=lambda x: x[0]
+    )
+    merged_intervals = []
+    for start, end in combined_intervals:
+        if not merged_intervals or merged_intervals[-1][1] < start:
+            merged_intervals.append([start, end])
+        else:
+            merged_intervals[-1][1] = max(merged_intervals[-1][1], end)
+
+    return np.array(merged_intervals)
+
+
+def subtract_intervals(A: np.ndarray, B: np.ndarray) -> pd.DataFrame:
+    B = B[np.argsort(B[:, 0])]
+
+    result = []
+
+    for a_start, a_end in A:
+        current = [(a_start, a_end)]
+
+        for b_start, b_end in B:
+            next_current = []
+            for c_start, c_end in current:
+                if b_end <= c_start or b_start >= c_end:
+                    # No overlap
+                    next_current.append((c_start, c_end))
+                else:
+                    # Overlap, split if needed
+                    if b_start > c_start:
+                        next_current.append((c_start, b_start))
+                    if b_end < c_end:
+                        next_current.append((b_end, c_end))
+            current = next_current
+
+        result.extend(current)
+
+    return pd.DataFrame(result, columns=["start", "end"])
+
+
+def sample_time_points(
+    intervals: np.ndarray,
+    N: int,
+    offset: float = 2.0,
+    win_ext: float = 0.0,
+    check_interval_bounds: bool = True,
+    seed: int = 801,
+) -> np.ndarray:
+    # Compute interval lengths
+    rng = np.random.default_rng(seed)
+    lengths = intervals[:, 1] - intervals[:, 0]
+    total_length = np.sum(lengths)
+
+    if total_length <= 0 or N <= 0:
+        return np.array([])
+
+    # Choose intervals proportional to their length
+    probs = lengths / total_length
+    interval_indices = rng.choice(len(intervals), size=N, p=probs)
+
+    # Sample uniformly within each selected interval
+    starts = intervals[interval_indices, 0]
+    stops = intervals[interval_indices, 1]
+    samples = starts + offset + rng.random(N) * ((stops - offset) - (starts + offset))
+    windows = np.array(
+        [
+            [samp - offset, samp + offset]
+            # [samp - offset - (win_ext / 2), samp + offset + (win_ext / 2)]
+            for samp in samples
+        ]
+    )
+    if check_interval_bounds:
+        good_null_intervals = []
+        for test_start, test_stop in windows:
+            for start, stop in intervals:
+                if test_start >= start and test_stop <= stop:
+                    good_null_intervals.append(
+                        [test_start - (win_ext / 2), test_stop + (win_ext / 2)]
+                    )
+                    break
+        windows = np.array(good_null_intervals)
+    return samples, windows
 
 
 load_events = {

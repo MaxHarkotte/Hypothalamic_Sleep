@@ -46,7 +46,7 @@ def make_envelope_df(state_dict, rec, **params):
     )
     df = pd.DataFrame(index=rec.get_times(), columns=columns)
     for ch in df.columns.get_level_values(0).unique():
-        ch_rec = rec.channel_slice(channel_ids=[ch])
+        ch_rec = rec.select_channels(channel_ids=[ch])
         df.loc[:, (ch, "filt1")] = ch_rec.get_traces(return_scaled=True).flatten()
         df.loc[:, (ch, "mask")] = np.full(
             shape=len(df.loc[:, (ch, "filt1")]), fill_value=False, dtype=bool
@@ -65,7 +65,7 @@ def make_envelope_df(state_dict, rec, **params):
 def extract_envelope(filt_rec, df, **params):
     channels = params.get("channels", filt_rec.get_channel_ids())
     for i, ch in enumerate(channels):
-        ch_rec = filt_rec.channel_slice(channel_ids=[ch])
+        ch_rec = filt_rec.select_channels(channel_ids=[ch])
         tmp_trace = ch_rec.get_traces(return_scaled=True).flatten()
         df.loc[:, (ch, "envelope1")] = np.abs(signal.hilbert(tmp_trace))
     return df
@@ -209,7 +209,7 @@ def run(manager, **params):
         rec = manager.ctx_rec
     if params.get("region").lower() == "hyp":
         rec = manager.hyp_rec
-    rec = rec.channel_slice(channel_ids=params.get("channels"))
+    rec = rec.select_channels(channel_ids=params.get("channels"))
     rec_duration = manager.config["data"].get("rec_duration", None)
     filt_rec, _ = down_filt_ref_rec(manager, rec, rec_dur=rec_duration, **params)
     df = make_envelope_df(manager.state_dict, filt_rec, **params)
@@ -222,7 +222,7 @@ def run(manager, **params):
             tmp_df = filt_df.loc[:, ch].reset_index(names="time")
             tmp_df.to_csv(
                 Path(
-                    manager.config["output_path"],
+                    manager.output_path,
                     (
                         f"infraslow-df_ch-{int(ch):02d}_"
                         f"{manager.config.get("config_id")}.csv"
@@ -231,7 +231,7 @@ def run(manager, **params):
             )
             np.savez(
                 Path(
-                    manager.config["output_path"],
+                    manager.output_path,
                     (
                         f"infraslow-psd_ch-{int(ch):02d}_"
                         f"{manager.config.get('config_id')}.npz"
@@ -242,7 +242,7 @@ def run(manager, **params):
             )
         with open(
             Path(
-                manager.config["output_path"],
+                manager.output_path,
                 f"infraslow-acorr_{manager.config.get('config_id')}.json",
             ),
             "w",

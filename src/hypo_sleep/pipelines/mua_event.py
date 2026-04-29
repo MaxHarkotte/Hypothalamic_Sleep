@@ -4,16 +4,26 @@ import os
 import time
 import numpy as np
 import pandas as pd
+from datetime import datetime as dt
+from datetime import timedelta
 import matplotlib.pyplot as plt
 from pathlib import Path
 from multiprocessing import Pool
 import itertools
 import json
+import xarray as xr
 import dask.array as da
 from tqdm import tqdm
 import spikeinterface.preprocessing as spp
 import spikeinterface.widgets as sw
-from hypo_sleep.session_helper import NumpyEncoder, NumpyDecoder, load_events, get_spans
+from hypo_sleep.session_helper import (
+    NumpyEncoder,
+    NumpyDecoder,
+    load_events,
+    get_spans,
+    union_intervals,
+    subtract_intervals,
+)
 from hypo_sleep.rec_utils import (
     load_rec_from_disk,
     save_rec,
@@ -23,6 +33,7 @@ from hypo_sleep.rec_utils import (
     get_filter_coeff,
     get_valid_times,
 )
+from hypo_sleep.utils import get_span_start_stop, logger
 
 
 def artifact_detection(recording, **params):
@@ -89,7 +100,7 @@ def remove_bad_channels(manager, recording=None, **params):
     artifact_triggers = artifact_detection(recording, **params)
     bad_channel_ids, channel_labels = spp.detect_bad_channels(recording)
     if bad_channel_ids.size > 0:
-        print(f"removing {len(bad_channel_ids)} as bad channels")
+        logger.info(f"removing {len(bad_channel_ids)} as bad channels")
         recording = recording.remove_channels(bad_channel_ids)
 
     ref_rec = reference_recording(
@@ -196,12 +207,12 @@ def get_mua_stats(manager, rec, **params):
         A dictionary containing mean, std, and max values for each channel.
     """
     dump_path = Path(
-        manager.config["output_path"],
+        manager.output_path,
         "mua",
-        f"mua_stats_dict_{params["mua_id"]}_{manager.config["config_id"]}.npz",
+        f"mua_stats_dict_{params['mua_id']}_{manager.config['config_id']}.npz",
     )
     if dump_path.exists():
-        print("Loading raw MUA times from disk")
+        logger.info("Loading raw MUA times from disk")
         with open(dump_path, "r") as f:
             mua_dict = json.load(f, cls=NumpyDecoder)
         return mua_dict
@@ -216,7 +227,7 @@ def get_mua_stats(manager, rec, **params):
             chunk[1] += min(chunk_size, rec.get_num_samples() - chunk[1])
     mua_dict = {ch: {"mean": [], "std": [], "max": 0} for ch in rec.get_channel_ids()}
     n_workers = params.get("n_workers", os.cpu_count() - 1)
-    print(
+    logger.info(
         f"starting MUA stats multiprocessing with {n_workers} workers for {len(tasks)} tasks"
     )
     with Pool(
@@ -245,43 +256,50 @@ def _run_thresh_chunk(recording, channel, chunk, thresh, ind):
     return channel, ind, np.where(tmp_trace > thresh)[0]
 
 
+def check_mua_exists(manager, mua_path, **params):
+
+    pass
+
+
 @timing
-def get_mua_times(manager, rec, chunks, mua_dict, **params):
+def get_mua_times(manager, rec, chunks, mua_dict, mua_path, **params):
     time_data = False
     raw_data = False
-    summed_data = False
     chunk_data = False
     Fs = rec.get_sampling_frequency()
-
     window = params.get("mua_window", None)
     if window is None:
         raise ValueError("`mua_window` must be provided in params")
     std_thresh = params.get("mua_std_thresh", None)
     if std_thresh is None:
         raise ValueError("`mua_std_thresh` must be provided in params")
-    # bin_size = params.get("bin_size", None)
-    # if bin_size is None:
-    #     raise ValueError("`bin_size` must be provided in params")
     time_vec = np.linspace(-window, window, int(2 * window * Fs))
+
+    ## check if xarray already exists
+    nc_file_path = Path(
+        mua_path,
+        f"raw_mua_{params['trigger']}_{params['trigger_ch']}_"
+        f"{params['mua_id']}_{manager.config['config_id']}.nc",
+    )
+    if nc_file_path.exists():
+        raw_mua = xr.load_dataarray(nc_file_path, engine="h5netcdf")
+        return raw_mua
+
+    ## Try to load old NPZ save files
     time_data_save_path = Path(
-        manager.config["output_path"],
-        "mua",
-        f"mua_time_data_{params["trigger"]}_{params["trigger_ch"]}_{params["mua_id"]}_{manager.config["config_id"]}.npz",
+        mua_path,
+        f"mua_time_data_{params['trigger']}_{params['trigger_ch']}_"
+        f"{params['mua_id']}_{manager.config['config_id']}.npz",
     )
     raw_save_path = Path(
-        manager.config["output_path"],
-        "mua",
-        f"raw_mua_times_{params["trigger"]}_{params["trigger_ch"]}_{params["mua_id"]}_{manager.config["config_id"]}.npz",
-    )
-    sum_save_path = Path(
-        manager.config["output_path"],
-        "mua",
-        f"summed_mua_times_{params["trigger"]}_{params["trigger_ch"]}_{params["mua_id"]}_{manager.config["config_id"]}.npz",
+        mua_path,
+        f"raw_mua_times_{params['trigger']}_{params['trigger_ch']}_"
+        f"{params['mua_id']}_{manager.config['config_id']}.npz",
     )
     chunk_save_path = Path(
-        manager.config["output_path"],
-        "mua",
-        f"mua_chunks_{params["trigger"]}_{params["trigger_ch"]}_{params["mua_id"]}_{manager.config["config_id"]}.npz",
+        mua_path,
+        f"mua_chunks_{params['trigger']}_{params['trigger_ch']}_"
+        f"{params['mua_id']}_{manager.config['config_id']}.npz",
     )
     mua_times = None
     # TODO: move to func to check if mua already exists
@@ -290,26 +308,22 @@ def get_mua_times(manager, rec, chunks, mua_dict, **params):
             used_chunks = data["chunks"]
         chunk_data = True
     if time_data_save_path.exists():
-        print("Loading time data from disk")
+        logger.info("Loading time data from disk")
         with np.load(time_data_save_path, allow_pickle=True) as data:
             time_vec = data["time_vec"]
         time_data = True
     if raw_save_path.exists():
-        print("Loading raw MUA times from disk")
+        logger.info("Loading raw MUA times from disk")
         with np.load(raw_save_path, allow_pickle=True) as data:
             mua_times = {ch: val for ch, val in data.items()}
         raw_data = True
-    if sum_save_path.exists():
-        print("Loading summed MUA times from disk")
-        with np.load(sum_save_path, allow_pickle=True) as data:
-            summed_mua_times = {ch: val for ch, val in data.items()}
-        summed_data = True
-    elif mua_times is not None:
-        summed_mua_times = {
-            ch: data.sum(axis=0).astype(np.int16) for ch, data in mua_times.items()
-        }
-    if np.logical_and.reduce((time_data, chunk_data, raw_data, summed_data)):
-        return summed_mua_times, mua_times, time_vec
+    if np.logical_and.reduce((time_data, chunk_data, raw_data)):
+        raw_mua, used_chunks = make_raw_xr(
+            manager, mua_times, used_chunks, time_vec, mua_path, **params
+        )
+        return raw_mua
+
+    ## Get MUA threshold and initialize MUA time dict
     mua_thresh = {
         ch: mua_dict[ch]["mean"] + std_thresh * mua_dict[ch]["std"]
         for ch in mua_dict.keys()
@@ -333,11 +347,14 @@ def get_mua_times(manager, rec, chunks, mua_dict, **params):
         used_chunks.append(rec.time_slice(start_time=start, end_time=stop).get_times())
     tasks = []
     for channel in channel_subset:
+        if channel not in mua_dict.keys():
+            logger.warning(f"Channel {channel} not in mua_dict, skipping")
+            continue
         for ind, chunk in enumerate(good_chunks):
             start, stop = chunk
             tasks.append((rec, channel, (start, stop), mua_thresh[channel], ind))
     n_workers = params.get("n_workers", os.cpu_count() - 1)
-    print(
+    logger.info(
         f"starting MUA multiprocessing with {n_workers} workers for {len(tasks)} tasks"
     )
     with Pool(
@@ -355,32 +372,162 @@ def get_mua_times(manager, rec, chunks, mua_dict, **params):
     for ch, ind, mask in results:
         mua_times[ch][ind, mask] = 1
     mua_times = {ch: data.astype(np.int8) for ch, data in mua_times.items()}
-    summed_mua_times = {
-        ch: data.sum(axis=0).astype(np.int32) for ch, data in mua_times.items()
-    }
-    # if params["trigger"] == "nrem-all":
-    #     start = np.searchsorted(time_vec, 5981.04600)
-    #     stop = np.searchsorted(time_vec, 6276.996)
-    #     tmp_raw_mua_times = {ch: data[start:stop] for ch, data in mua_times.items()}
     try:
         used_chunks = np.array(used_chunks)
     except ValueError:
         uni_counts = np.unique_counts([len(chunk) for chunk in used_chunks])
-        min_count_ind = np.argmin(uni_counts.counts)
-        if (uni_counts.counts[min_count_ind] == 1) and (
-            len(used_chunks[-1]) == uni_counts.values[min_count_ind]
-        ):
-            used_chunks = np.array(used_chunks[:-1])
-    finally:
-        np.savez(chunk_save_path, chunks=used_chunks)
-    np.savez(raw_save_path, **mua_times)
-    np.savez(sum_save_path, **summed_mua_times)
-    np.savez(
-        file=time_data_save_path,
-        time_vec=time_vec,
+        while len(uni_counts.counts) > 1:
+            min_count_ind = np.argmin(uni_counts.counts)
+            if uni_counts.counts[min_count_ind] == 1:
+                small_inds = np.where(
+                    np.array([len(chunk) for chunk in used_chunks])
+                    == uni_counts.values[min_count_ind]
+                )[0]
+                used_chunks = [
+                    chunk
+                    for ind, chunk in enumerate(used_chunks)
+                    if ind not in small_inds
+                ]
+            uni_counts = np.unique_counts([len(chunk) for chunk in used_chunks])
+        used_chunks = np.array(used_chunks)
+    raw_mua, used_chunks = make_raw_xr(
+        manager, mua_times, used_chunks, time_vec, mua_path, **params
     )
+    # finally:
+    #     np.savez(chunk_save_path, chunks=used_chunks)
+    # np.savez(raw_save_path, **mua_times)
+    # np.savez(sum_save_path, **summed_mua_times)
+    # np.savez(
+    #     file=time_data_save_path,
+    #     time_vec=time_vec,
+    # )
     ## TODO: convert to using xarray to store raw MUA
-    return summed_mua_times, mua_times, time_vec
+    # import pdb
+
+    # pdb.set_trace()
+    return raw_mua
+
+
+@timing
+def make_raw_xr(manager, mua_times, chunk_times, time_vec, mua_path, **params):
+    trigger = params["trigger"]
+    date_dt = dt.strptime(manager.config["date"], "%Y-%m-%d_%H-%M-%S")
+    base_dt_64 = pd.to_datetime(date_dt, unit="ns")
+    nc_file_path = Path(
+        mua_path,
+        f"raw_mua_{params['trigger']}_{params['trigger_ch']}_"
+        f"{params['mua_id']}_{manager.config['config_id']}.nc",
+    )
+    if nc_file_path.exists():
+        raw_mua = xr.load_dataarray(nc_file_path, engine="h5netcdf")
+        logger.info(f"raw shape: {raw_mua.shape}")
+        return raw_mua, chunk_times
+    else:
+        delta_times = pd.to_timedelta(chunk_times.ravel(), unit="s")
+        times_dt64 = base_dt_64 + delta_times
+        if (trigger.split("-")[0] in ["spi", "so"]) or (
+            "null" in trigger.split("-")[1]
+        ):
+            times_dt64 = times_dt64.values.reshape(chunk_times.shape)
+            stacked_raw_mua = np.stack([val for val in mua_times.values()], axis=0)
+            raw_mua = xr.DataArray(
+                data=stacked_raw_mua[:, : chunk_times.shape[0], :],
+                dims=["channel", "trial", "time"],
+                coords={
+                    "channel": list(mua_times.keys()),
+                    "trial": np.arange(chunk_times.shape[0]),
+                    "time": pd.to_timedelta(time_vec, unit="s"),
+                    "timestamps": (("trial", "time"), times_dt64),
+                    "start_time": ("trial", chunk_times[:, 0]),
+                    "end_time": ("trial", chunk_times[:, 1]),
+                },
+            )
+        else:
+            stacked_raw_mua = np.stack(
+                [val.ravel() for val in mua_times.values()], axis=0
+            )
+            trial_ids = np.repeat(np.arange(chunk_times.shape[0]), chunk_times.shape[1])
+            time_index = np.tile(np.arange(chunk_times.shape[1]), chunk_times.shape[0])
+            delta_times = pd.to_timedelta(chunk_times.ravel(), unit="s")
+            times_dt64 = base_dt_64 + delta_times
+            raw_mua = xr.DataArray(
+                stacked_raw_mua[:, : times_dt64.shape[0]],
+                dims=["channel", "time"],
+                coords={
+                    "channel": list(mua_times.keys()),
+                    "time": times_dt64,
+                    "trial": ("time", trial_ids),
+                    "time_index": ("time", time_index),
+                },
+                name="raw_mua_counts",
+            )
+        logger.info(f"raw shape: {raw_mua.shape}")
+        raw_mua.to_netcdf(
+            nc_file_path,
+            engine="h5netcdf",
+        )
+        return raw_mua, chunk_times
+
+
+@timing
+def bin_mua_xr(manager, raw_mua, mua_path, **params):
+    trigger = params["trigger"]
+    resamp_path = Path(
+        mua_path,
+        f"{params['mua_resample_rate']}_resamp_mua_{params['trigger']}_"
+        f"{params['trigger_ch']}_{params['mua_id']}_{manager.config['config_id']}",
+    )
+    if (trigger.split("-")[0] in ["spi", "so"]) or ("null" in trigger.split("-")[1]):
+        resamp_path = resamp_path.with_name(resamp_path.name + ".nc")
+        if resamp_path.exists():
+            resample_mua = xr.load_dataarray(resamp_path)
+            return resample_mua
+        try:
+            resample_mua = raw_mua.resample(time=params["mua_resample_rate"]).sum()
+        except ValueError:
+            raw_mua = raw_mua.sortby("time")
+            resample_mua = raw_mua.resample(time=params["mua_resample_rate"]).sum()
+        logger.info(f"resample shape: {resample_mua.shape}")
+
+        resample_mua.to_netcdf(
+            resamp_path,
+            engine="h5netcdf",
+        )
+        return resample_mua
+
+    else:
+        if resamp_path.exists():
+            resample_mua = []
+            for fp in resamp_path.glob("*.nc"):
+                resample_mua.append(
+                    xr.load_dataarray(
+                        fp,
+                        engine="h5netcdf",
+                    )
+                )
+        else:
+            resamp_path.mkdir()
+            jump_inds = np.where(
+                raw_mua.time.diff(dim="time")
+                < pd.to_timedelta(params["mua_span_gap_nsamp"] / params["Fs"], unit="s")
+            )[0]
+            cont_inds = get_span_start_stop(jump_inds)
+            good_inds = [
+                [start, stop]
+                for start, stop in cont_inds
+                if stop - start > params["Fs"] * params["mua_min_good_span_len"]
+            ]
+            # Resample continuous spans
+            resample_mua = []
+            for start, stop in good_inds:
+                seg = raw_mua.isel(time=slice(start, stop + 1))
+                resample_mua.append(
+                    seg.resample(time=params["mua_resample_rate"]).sum()
+                )
+
+            for ind, seg in enumerate(resample_mua):
+                seg.to_netcdf(Path(resamp_path, f"{ind:02d}.nc"), engine="h5netcdf")
+        return resample_mua
 
 
 @timing
@@ -444,13 +591,25 @@ def run(manager, **params):
 
     params["spectra_window"] = 0
     rec = getattr(manager, f"{params['region'].lower()}_rec")
-    rectified_rec = remove_bad_channels(manager, recording=manager.hyp_rec, **params)
-    mua_path = Path(manager.config["output_path"], "mua")
+    rectified_rec = remove_bad_channels(manager, recording=rec, **params)
+    mua_path = Path(manager.output_path, "mua")
     if not mua_path.exists():
         mua_path.mkdir()
     mua_dict = get_mua_stats(manager, rec=rectified_rec, **params)
     trigger = params["trigger"]
-    if trigger.split("-")[0] in ["so", "spi"]:
+    logger.info(f"MUA trigger: {trigger}")
+    if "null" in trigger.split("-")[1]:
+        valid_spans_spi = load_events["spi"](manager, channel=params.get("trigger_ch"))
+        valid_spans_so = load_events["so"](manager, channel=params.get("trigger_ch"))
+        so_times = np.stack(
+            [valid_spans_so.down_crossing, valid_spans_so.end_crossing]
+        ).T
+        spi_times = np.stack([valid_spans_spi.start, valid_spans_spi.end]).T
+        event_intervals = union_intervals(so_times, spi_times)
+        valid_spans = subtract_intervals(
+            manager.state_dict["NREM"]["times"].T, event_intervals
+        )
+    elif trigger.split("-")[0] in ["so", "spi"]:
         valid_spans = load_events[trigger.split("-")[0]](
             manager, channel=params.get("trigger_ch")
         )
@@ -458,24 +617,34 @@ def run(manager, **params):
         valid_spans = None
     params["chunk_window"] = params["mua_window"]
     chunks = get_spans(manager, valid_spans=valid_spans, **params)
-
-    summed_mua_times, mua_times, time_vec = get_mua_times(
-        manager=manager, rec=rectified_rec, chunks=chunks, mua_dict=mua_dict, **params
+    raw_mua = get_mua_times(
+        manager=manager,
+        rec=rectified_rec,
+        chunks=chunks,
+        mua_dict=mua_dict,
+        mua_path=mua_path,
+        **params,
     )
+    if len(raw_mua) == 2:
+        import pdb
+
+        pdb.set_trace()
     binned_mua = None
-    if params.get("mua_bin_size", False):
-        binned_mua = bin_mua(mua_times, time_vec, chunks, **params)
-        binned_save_path = Path(
-            manager.config["output_path"],
-            "mua",
-            f"binned_mua_times_{params["trigger"]}_{params["trigger_ch"]}_{params["mua_id"]}_{manager.config["config_id"]}.npz",
+    if params.get("mua_resample_rate", False):
+        binned_mua = bin_mua_xr(
+            manager=manager,
+            raw_mua=raw_mua,
+            mua_path=mua_path,
+            **params,
         )
-        # with open(binned_save_path, "w") as fp:
-        binned_mua_on_disk = compute_dask_in_structure(binned_mua)
-        np.savez(binned_save_path, **binned_mua_on_disk)
+        # binned_mua = bin_mua(mua_times, time_vec, **params)
+        # binned_save_path = Path(
+        #     manager.config["output_path"],
+        #     "mua",
+        #     f"binned_mua_times_{params["trigger"]}_{params["trigger_ch"]}_{params["mua_id"]}_{manager.config["config_id"]}.npz",
+        # )
+        # # with open(binned_save_path, "w") as fp:
+        # binned_mua_on_disk = compute_dask_in_structure(binned_mua)
+        # np.savez(binned_save_path, **binned_mua_on_disk)
         # json.dump(binned_mua, fp, cls=NumpyEncoder)
-    return {
-        "summed_mua_times": summed_mua_times,
-        "time_vec": time_vec,
-        "binned_mua": binned_mua,
-    }
+    return

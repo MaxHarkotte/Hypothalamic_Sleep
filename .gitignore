@@ -92,3 +92,7 @@ coverage.xml
 .DS_Store
 *.png
 *.mp4
+*.csv
+*.nc
+*.h5
+*.json
